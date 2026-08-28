@@ -1,0 +1,67 @@
+{
+  "unmapped_tract": {
+    "tract_query_response": [],
+    "zcta_query_response": [
+      [
+        "B25077_001E",
+        "B19013_001E",
+        "B25064_001E",
+        "B01002_001E",
+        "B01003_001E",
+        "zip code tabulation area"
+      ],
+      [
+        "850000",
+        "95000",
+        "1900",
+        "38.0",
+        "28500",
+        "94110"
+      ]
+    ],
+    "county_query_response": [
+      [
+        "B25077_001E",
+        "B19013_001E",
+        "B25064_001E",
+        "B01002_001E",
+        "B01003_001E",
+        "state",
+        "county"
+      ],
+      [
+        "1350000",
+        "126000",
+        "2250",
+        "38.5",
+        "873965",
+        "06",
+        "075"
+      ]
+    ]
+  },
+  "non_residential_tract_central_park": {
+    "geoid": "36061014300",
+    "fips": {
+      "state": "36",
+      "county": "061",
+      "tract": "014300"
+    },
+    "population": 0,
+    "home_value": null,
+    "income": null,
+    "description": "Central Park Non-Residential Tract"
+  },
+  "special_land_use_ohare": {
+    "geoid": "17031980000",
+    "fips": {
+      "state": "17",
+      "county": "031",
+      "tract": "980000"
+    },
+    "population": 0,
+    "home_value": null,
+    "income": null,
+    "description": "O'Hare Airport Special Land Use Tract"
+  }
+}

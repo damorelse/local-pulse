@@ -1,0 +1,5 @@
+.agents
+.system_generated
+.DS_Store
+node_modules
+*.log

@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#020617" />
+      <stop offset="50%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1e293b" />
+    </linearGradient>
+
+    <!-- Pulse Ring Glow Gradient -->
+    <radialGradient id="ring-grad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.8" />
+      <stop offset="60%" stop-color="#06b6d4" stop-opacity="0.3" />
+      <stop offset="100%" stop-color="#0284c7" stop-opacity="0" />
+    </radialGradient>
+
+    <!-- Pin Gradient -->
+    <linearGradient id="pin-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="50%" stop-color="#06b6d4" />
+      <stop offset="100%" stop-color="#10b981" />
+    </linearGradient>
+
+    <!-- Emerald Arc Gradient -->
+    <linearGradient id="arc-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="50%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#8b5cf6" />
+    </linearGradient>
+
+    <!-- Drop Shadow Filter -->
+    <filter id="glow-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#06b6d4" flood-opacity="0.45" />
+    </filter>
+  </defs>
+
+  <!-- Background Rounded Canvas -->
+  <rect width="512" height="512" rx="112" fill="url(#bg-grad)" stroke="#334155" stroke-width="6" />
+
+  <!-- Radiating Pulse Radar Rings -->
+  <circle cx="256" cy="230" r="190" fill="none" stroke="url(#ring-grad)" stroke-width="3" opacity="0.35" stroke-dasharray="12 8" />
+  <circle cx="256" cy="230" r="145" fill="none" stroke="#38bdf8" stroke-width="3.5" opacity="0.45" />
+  <circle cx="256" cy="230" r="105" fill="none" stroke="#22d3ee" stroke-width="4" opacity="0.6" />
+
+  <!-- Semi-Circular Intelligence Arc Gauge -->
+  <path d="M 120 230 A 136 136 0 0 1 392 230" fill="none" stroke="url(#arc-grad)" stroke-width="18" stroke-linecap="round" filter="url(#glow-shadow)" />
+
+  <!-- Glowing Pulse Pin Body -->
+  <path d="M 256 95 C 205 95 164 136 164 187 C 164 248 240 338 250 350 C 253 354 259 354 262 350 C 272 338 348 248 348 187 C 348 136 307 95 256 95 Z" fill="url(#pin-grad)" filter="url(#glow-shadow)" />
+
+  <!-- Center Pin Dot -->
+  <circle cx="256" cy="185" r="36" fill="#020617" />
+  <circle cx="256" cy="185" r="22" fill="#38bdf8" />
+  <circle cx="256" cy="185" r="10" fill="#ffffff" />
+
+  <!-- Waveform Equalizer / Pulse Bars at Bottom -->
+  <g transform="translate(146, 395)">
+    <rect x="0" y="20" width="16" height="30" rx="8" fill="#10b981" />
+    <rect x="30" y="10" width="16" height="40" rx="8" fill="#34d399" />
+    <rect x="60" y="0" width="16" height="50" rx="8" fill="#38bdf8" />
+    <rect x="90" y="8" width="16" height="42" rx="8" fill="#22d3ee" />
+    <rect x="120" y="18" width="16" height="32" rx="8" fill="#818cf8" />
+    <rect x="150" y="5" width="16" height="45" rx="8" fill="#a78bfa" />
+    <rect x="180" y="22" width="16" height="28" rx="8" fill="#f43f5e" />
+    <rect x="210" y="12" width="16" height="38" rx="8" fill="#fb923c" />
+  </g>
+</svg>

@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+  <title>Local Pulse — Hyper-Local US Intelligence</title>
+  <meta name="description" content="Zero-maintenance, battery-conscious local demographic, economic, and environmental intelligence for any US location.">
+  <meta name="theme-color" content="#020617">
+
+  <!-- PWA Web App Manifest -->
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+
+  <!-- Leaflet GIS Stylesheets (CDN + Local Fallback) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <link rel="stylesheet" href="css/leaflet.css">
+
+  <!-- Core Application Stylesheet -->
+  <link rel="stylesheet" href="css/style.css">
+
+  <!-- Zero-FOUC Theme Script (Executes before first paint) -->
+  <script>
+    (function() {
+      try {
+        var saved = localStorage.getItem('localpulse_theme');
+        var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (saved === 'dark' || (!saved && prefersDark)) {
+          document.documentElement.classList.add('dark');
+          document.documentElement.classList.remove('light');
+        } else {
+          document.documentElement.classList.remove('dark');
+          document.documentElement.classList.add('light');
+        }
+      } catch (e) {
+        document.documentElement.classList.add('dark');
+      }
+    })();
+  </script>
+</head>
+<body>
+
+  <!-- =========================================================================
+       1. Top Navigation & Global Header
+       ========================================================================= -->
+  <header class="app-header" role="banner">
+    <div class="header-inner">
+      <!-- Brand Logo -->
+      <div class="brand-container" id="brand-logo" title="Local Pulse Home" tabindex="0" role="button">
+        <div class="brand-logo-icon">📍</div>
+        <div class="brand-title">
+          <span>Local Pulse</span>
+          <span class="brand-pulse-dot" title="Live Public APIs Connected"></span>
+        </div>
+      </div>
+
+      <!-- Live Search & Autocomplete Input -->
+      <form class="search-form" id="search-form" role="search" onsubmit="return false;">
+        <div class="search-input-wrapper">
+          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input
+            type="text"
+            id="search-input"
+            class="search-input"
+            placeholder="Search US address, neighborhood, city, or ZIP..."
+            autocomplete="off"
+            aria-autocomplete="list"
+            aria-controls="search-autocomplete"
+            aria-expanded="false"
+          >
+          <button type="button" id="search-clear-btn" class="search-clear-btn" title="Clear search" aria-label="Clear search">✕</button>
+        </div>
+        <!-- Autocomplete Dropdown Menu -->
+        <div id="search-autocomplete" class="autocomplete-dropdown" role="listbox" aria-label="Search suggestions"></div>
+      </form>
+
+      <!-- Header Action Controls -->
+      <div class="header-actions">
+        <!-- 1-Tap GPS Locate Button -->
+        <button type="button" id="btn-locate-me" class="btn-header-primary" title="Locate via GPS" aria-label="Use current location">
+          <span>📍</span>
+          <span>Locate Me</span>
+        </button>
+
+        <!-- Saved Places Drawer Button -->
+        <button type="button" id="btn-saved-places" class="btn-icon" title="Saved Places" aria-label="Open saved places drawer">
+          <span>★</span>
+          <span id="saved-count-badge" class="badge-count hidden">0</span>
+        </button>
+
+        <!-- Dark / Light Theme Toggle -->
+        <button type="button" id="btn-theme-toggle" class="btn-icon" title="Toggle Dark/Light Mode" aria-label="Toggle theme">
+          <span class="theme-toggle-icon">🌙</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- =========================================================================
+       2. Popular US Neighborhood Presets Quick-Jump Bar
+       ========================================================================= -->
+  <nav class="presets-bar" aria-label="Popular Neighborhood Presets">
+    <div class="presets-inner" id="presets-chips-container">
+      <span class="presets-label">Presets:</span>
+      <button type="button" class="chip-btn active" data-lat="37.7525" data-lng="-122.4184" data-name="SF Mission">
+        <span>🌉</span> SF Mission
+      </button>
+      <button type="button" class="chip-btn" data-lat="30.2672" data-lng="-97.7431" data-name="Austin Downtown">
+        <span>🎸</span> Austin Downtown
+      </button>
+      <button type="button" class="chip-btn" data-lat="40.7144" data-lng="-73.9553" data-name="NYC Williamsburg">
+        <span>🗽</span> NYC Williamsburg
+      </button>
+      <button type="button" class="chip-btn" data-lat="47.6253" data-lng="-122.3222" data-name="Seattle Capitol Hill">
+        <span>☕</span> Seattle Capitol Hill
+      </button>
+      <button type="button" class="chip-btn" data-lat="41.8818" data-lng="-87.6232" data-name="Chicago Loop">
+        <span>🏙️</span> Chicago Loop
+      </button>
+      <button type="button" class="chip-btn" data-lat="25.7825" data-lng="-80.1340" data-name="Miami South Beach">
+        <span>🌴</span> Miami South Beach
+      </button>
+    </div>
+  </nav>
+
+  <!-- =========================================================================
+       3. Main Content: Pulse Hero Header & Responsive Bento-Box Grid
+       ========================================================================= -->
+  <main class="main-container" id="main-content" role="main">
+
+    <!-- 3.1 Pulse Hero Header Section -->
+    <section class="pulse-hero" id="pulse-hero" aria-labelledby="hero-location-name">
+      <div class="hero-top-row">
+        <!-- Location Title & Metadata -->
+        <div class="hero-location-info">
+          <div class="hero-title-group">
+            <h1 class="hero-title" id="hero-location-name">Mission District, San Francisco, CA</h1>
+            <span id="hero-resolution-badge" class="badge-pill badge-resolution-tract" title="Census Data Resolution Level">
+              📍 Census Tract 0229.01
+            </span>
+          </div>
+          <div class="hero-meta-row">
+            <span class="hero-meta-item" id="hero-fips-badge">
+              <span class="font-mono">FIPS: 06-075-022901</span>
+            </span>
+            <span class="hero-meta-item" id="hero-coords-badge">
+              <span class="font-mono">37.7525° N, 122.4184° W</span>
+            </span>
+            <span class="hero-meta-item" id="hero-vintage-badge">
+              <span>Survey: ACS 5-Year</span>
+            </span>
+          </div>
+        </div>
+
+        <!-- Controls: Multi-Vintage Selector, Bookmark, Share -->
+        <div class="hero-controls">
+          <!-- Survey Vintage Selector Group -->
+          <div class="vintage-selector-group" id="vintage-selector" role="group" aria-label="Census Survey Vintage">
+            <button type="button" class="vintage-btn active" data-vintage="2022" title="2022 ACS 5-Year Data">2022 (Current)</button>
+            <button type="button" class="vintage-btn" data-vintage="2020" title="2020 Decennial Baseline">2020</button>
+            <button type="button" class="vintage-btn" data-vintage="2015" title="2015 Historical Baseline">2015</button>
+          </div>
+
+          <!-- 1-Tap Bookmark Place Button -->
+          <button type="button" id="btn-bookmark-place" class="hero-action-btn" title="Bookmark this location" aria-label="Bookmark this location">
+            <span class="bookmark-icon">★</span>
+            <span class="bookmark-text">Save</span>
+          </button>
+
+          <!-- 1-Tap Share Summary Button -->
+          <button type="button" id="btn-share-summary" class="hero-action-btn" title="Share neighborhood summary" aria-label="Share summary">
+            <span>📤</span>
+            <span>Share</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 3.2 Glanceable 3-Second Summary Pill Bar -->
+      <div class="glanceable-pill-bar" id="glanceable-pill-bar" aria-label="Quick neighborhood metrics summary">
+        <!-- Pill 1: Median Home Value -->
+        <div class="glance-pill">
+          <div class="glance-pill-header">
+            <span>🏠 Median Home</span>
+            <span class="font-mono text-xs text-muted">B25077</span>
+          </div>
+          <div class="glance-pill-value font-mono tabular-nums" id="glance-home-price">$1,285,000</div>
+          <div class="glance-pill-delta delta-warning" id="glance-home-delta">
+            <span>▲ +355% vs US</span>
+          </div>
+        </div>
+
+        <!-- Pill 2: Household Income -->
+        <div class="glance-pill">
+          <div class="glance-pill-header">
+            <span>💰 Household Income</span>
+            <span class="font-mono text-xs text-muted">B19013</span>
+          </div>
+          <div class="glance-pill-value font-mono tabular-nums" id="glance-income">$118,400</div>
+          <div class="glance-pill-delta delta-positive" id="glance-income-delta">
+            <span>▲ +57% vs US</span>
+          </div>
+        </div>
+
+        <!-- Pill 3: Air Quality Index -->
+        <div class="glance-pill">
+          <div class="glance-pill-header">
+            <span>🌱 Air Quality</span>
+            <span class="font-mono text-xs text-muted">US AQI</span>
+          </div>
+          <div class="glance-pill-value font-mono tabular-nums" id="glance-aqi">28 AQI</div>
+          <div class="glance-pill-delta delta-positive" id="glance-aqi-delta">
+            <span>● Good Air Quality</span>
+          </div>
+        </div>
+
+        <!-- Pill 4: Mobility & Walkability -->
+        <div class="glance-pill">
+          <div class="glance-pill-header">
+            <span>🚶 Green Commute</span>
+            <span class="font-mono text-xs text-muted">B08301</span>
+          </div>
+          <div class="glance-pill-value font-mono tabular-nums" id="glance-mobility">78%</div>
+          <div class="glance-pill-delta delta-positive" id="glance-mobility-delta">
+            <span>Transit, Walk & Bike</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =======================================================================
+         4. 12-Column Bento-Box Dashboard Grid
+         ======================================================================= -->
+    <div class="bento-grid" id="bento-grid">
+
+      <!-- CARD 1: Economic & Housing Affordability (Col 4) -->
+      <article class="bento-card col-span-4" id="card-housing" aria-labelledby="card-housing-title">
+        <header class="card-header">
+          <div class="card-title-group">
+            <span class="card-icon">🏠</span>
+            <h2 class="card-title" id="card-housing-title">Housing & Affordability</h2>
+          </div>
+          <span class="card-badge" id="badge-affordability-ratio">10.8x Ratio</span>
+        </header>
+
+        <div class="card-body">
+          <!-- 180° SVG Semi-Circular Arc Gauge Container -->
+          <div class="gauge-container" id="gauge-affordability" aria-label="Affordability Ratio Gauge"></div>
+
+          <!-- Key Financial Readouts -->
+          <div class="metric-stats-row">
+            <div class="stat-item">
+              <span class="stat-label">Median Home Price</span>
+              <span class="stat-value font-mono tabular-nums" id="stat-home-value">$1,285,000</span>
+              <span class="stat-sub" id="stat-home-sub">US: $281,900</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Median Gross Rent</span>
+              <span class="stat-value font-mono tabular-nums" id="stat-gross-rent">$2,150 /mo</span>
+              <span class="stat-sub" id="stat-rent-sub">US: $1,268 /mo</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Median Household Income</span>
+              <span class="stat-value font-mono tabular-nums" id="stat-median-income">$118,400</span>
+              <span class="stat-sub" id="stat-income-sub">US: $75,149</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Gross Rent Burden</span>
+              <span class="stat-value font-mono tabular-nums" id="stat-rent-burden">21.8%</span>
+              <span class="stat-sub delta-positive" id="stat-burden-sub">Affordable (&lt;30%)</span>
+            </div>
+          </div>
+        </div>
+
+        <footer class="card-footer">
+          <span>Source: US Census ACS 5-Yr</span>
+          <span id="footer-housing-vintage" class="font-mono">Vintage 2022</span>
+        </footer>
+      </article>
+
+      <!-- CARD 2: Interactive CartoDB GIS Map (Col 4) -->
+      <article class="bento-card col-span-4" id="card-map" aria-labelledby="card-map-title">
+        <header class="card-header">
+          <div class="card-title-group">
+            <span class="card-icon">🗺️</span>
+            <h2 class="card-title" id="card-map-title">Neighborhood Map</h2>
+          </div>
+          <button type="button" id="btn-expand-map" class="btn-icon" title="Expand Fullscreen Map" aria-label="Expand map full screen">
+            <span>⛶</span>
+          </button>
+        </header>
+
+        <div class="card-body">
+          <div class="map-card-container" id="map-container" aria-label="CartoDB Interactive Map">
+            <!-- Mobile Touch Scroll-Trap Protection Overlay -->
+            <div class="map-touch-overlay" id="map-touch-overlay">
+              <span>👆 Tap to interact with map</span>
+            </div>
+          </div>
+        </div>
+
+        <footer class="card-footer">
+          <span id="map-coords-readout" class="font-mono">Lat: 37.7525, Lng: -122.4184</span>
+          <span>Drag pin to re-query</span>
+        </footer>
+      </article>
+
+      <!-- CARD 3: Real-Time Air Quality & Climate (Col 4) -->
+      <article class="bento-card col-span-4" id="card-environment" aria-labelledby="card-env-title">
+        <header class="card-header">
+          <div class="card-title-group">
+            <span class="card-icon">🌱</span>
+            <h2 class="card-title" id="card-env-title">Air Quality & Climate</h2>
+          </div>
+          <span class="card-badge" id="badge-aqi-category" style="color: var(--color-emerald-400);">Good</span>
+        </header>
+
+        <div class="card-body">
+          <!-- 180° SVG Semi-Circular Arc Gauge Container -->
+          <div class="gauge-container" id="gauge-aqi" aria-label="Air Quality Index Gauge"></div>
+
+          <!-- Environmental Pollutants & Weather Readouts -->
+          <div class="metric-stats-row">
+            <div class="stat-item">
+              <span class="stat-label">PM2.5 Fine Dust</span>
+              <span class="stat-value font-mono tabular-nums" id="stat-pm25">6.8 µg/m³</span>
+              <span class="stat-sub delta-positive">Optimal</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Ozone (O₃)</span>
+              <span class="stat-value font-mono tabular-nums" id="stat-ozone">42 µg/m³</span>
+              <span class="stat-sub delta-positive">Low</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Temperature</span>
+              <span class="stat-value font-mono tabular-nums" id="stat-temperature">64°F (17.8°C)</span>
+              <span class="stat-sub" id="stat-humidity">Humidity: 68%</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Ground Elevation</span>
+              <span class="stat-value font-mono tabular-nums" id="stat-elevation">125 ft (38m)</span>
+              <span class="stat-sub" id="stat-weather-desc">Partly Cloudy</span>
+            </div>
+          </div>
+        </div>
+
+        <footer class="card-footer">
+          <span>Source: Open-Meteo Real-Time</span>
+          <span id="footer-env-time" class="font-mono">Live</span>
+        </footer>
+      </article>
+
+      <!-- CARD 4: Demographics & Diversity (Col 6) -->
+      <article class="bento-card col-span-6" id="card-demographics" aria-labelledby="card-demo-title">
+        <header class="card-header">
+          <div class="card-title-group">
+            <span class="card-icon">👥</span>
+            <h2 class="card-title" id="card-demo-title">Demographics & Diversity</h2>
+          </div>
+          <span class="card-badge" id="badge-diversity-score">Simpson's Diversity: 76/100</span>
+        </header>
+
+        <div class="card-body">
+          <div class="metric-stats-row" style="margin-top: 0; margin-bottom: 0.75rem;">
+            <div class="stat-item">
+              <span class="stat-label">Total Population</span>
+              <span class="stat-value font-mono tabular-nums" id="stat-population">4,820</span>
+              <span class="stat-sub" id="stat-pop-density">Density: 28,400 /sq mi</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Median Age</span>
+              <span class="stat-value font-mono tabular-nums" id="stat-median-age">36.2 yrs</span>
+              <span class="stat-sub" id="stat-age-sub">US: 38.8 yrs</span>
+            </div>
+          </div>
+
+          <!-- Segmented Race & Ethnicity Pill Bar -->
+          <div class="segmented-bar-wrapper">
+            <div class="segmented-bar-header">
+              <span>Racial & Ethnic Composition</span>
+              <span class="font-mono text-xs text-muted" id="diversity-total-count">4,820 Residents</span>
+            </div>
+            <div id="bar-diversity" aria-label="Racial & Ethnic Composition Pill Bar"></div>
+          </div>
+        </div>
+
+        <footer class="card-footer">
+          <span>Source: US Census Bureau B03002</span>
+          <span>High Diversity</span>
+        </footer>
+      </article>
+
+      <!-- CARD 5: Education & Commute Mobility (Col 6) -->
+      <article class="bento-card col-span-6" id="card-education-commute" aria-labelledby="card-edu-title">
+        <header class="card-header">
+          <div class="card-title-group">
+            <span class="card-icon">🎓</span>
+            <h2 class="card-title" id="card-edu-title">Education & Commute Mobility</h2>
+          </div>
+          <span class="card-badge" id="badge-education-level">62% Bachelor's+</span>
+        </header>
+
+        <div class="card-body">
+          <!-- Segmented Educational Attainment Pill Bar -->
+          <div class="segmented-bar-wrapper">
+            <div class="segmented-bar-header">
+              <span>Educational Attainment (Pop 25+)</span>
+              <span class="font-mono text-xs text-muted" id="stat-bachelor-plus">62.4% Bachelor's or Higher</span>
+            </div>
+            <div id="bar-education" aria-label="Educational Attainment Pill Bar"></div>
+          </div>
+
+          <!-- Segmented Commute Mode Share Pill Bar -->
+          <div class="segmented-bar-wrapper">
+            <div class="segmented-bar-header">
+              <span>Commute Mode Shares</span>
+              <span class="font-mono text-xs text-muted" id="stat-commute-time">Mean: 28.5 mins</span>
+            </div>
+            <div id="bar-commute" aria-label="Commute Mode Shares Pill Bar"></div>
+          </div>
+        </div>
+
+        <footer class="card-footer">
+          <span>Source: US Census B15003 / B08301</span>
+          <span class="delta-positive">High Transit & Walkability</span>
+        </footer>
+      </article>
+
+      <!-- CARD 6: Local Cultural Landmarks & History (Col 12) -->
+      <article class="bento-card col-span-12" id="card-landmarks" aria-labelledby="card-landmarks-title">
+        <header class="card-header">
+          <div class="card-title-group">
+            <span class="card-icon">🏛️</span>
+            <h2 class="card-title" id="card-landmarks-title">Nearby Cultural Landmarks & History</h2>
+          </div>
+          <span class="card-badge" id="landmarks-count-badge">Wikipedia GeoSearch</span>
+        </header>
+
+        <div class="card-body">
+          <!-- Landmarks Card Grid -->
+          <div class="landmarks-grid" id="landmarks-grid" aria-label="Nearby Cultural Landmarks">
+            <!-- Sample Landmark Card 1 -->
+            <div class="landmark-card">
+              <div class="landmark-img-container">
+                <div class="landmark-img-fallback">🏛️</div>
+                <span class="landmark-distance-tag font-mono">0.3 mi</span>
+              </div>
+              <div class="landmark-content">
+                <h3 class="landmark-title">Mission San Francisco de Asís (Mission Dolores)</h3>
+                <p class="landmark-snippet">The oldest surviving structure in San Francisco, founded in 1776 by Spanish Franciscan missionaries.</p>
+                <a href="https://en.wikipedia.org/wiki/Mission_San_Francisco_de_As%C3%ADs" target="_blank" rel="noopener" class="landmark-link">
+                  <span>Read on Wikipedia</span>
+                  <span>→</span>
+                </a>
+              </div>
+            </div>
+
+            <!-- Sample Landmark Card 2 -->
+            <div class="landmark-card">
+              <div class="landmark-img-container">
+                <div class="landmark-img-fallback">🎨</div>
+                <span class="landmark-distance-tag font-mono">0.6 mi</span>
+              </div>
+              <div class="landmark-content">
+                <h3 class="landmark-title">The Women's Building</h3>
+                <p class="landmark-snippet">A community arts center famous for the MaestraPeace mural, a massive celebration of women's courage and multicultural solidarity.</p>
+                <a href="https://en.wikipedia.org/wiki/The_Women%27s_Building" target="_blank" rel="noopener" class="landmark-link">
+                  <span>Read on Wikipedia</span>
+                  <span>→</span>
+                </a>
+              </div>
+            </div>
+
+            <!-- Sample Landmark Card 3 -->
+            <div class="landmark-card">
+              <div class="landmark-img-container">
+                <div class="landmark-img-fallback">🏳️‍🌈</div>
+                <span class="landmark-distance-tag font-mono">0.8 mi</span>
+              </div>
+              <div class="landmark-content">
+                <h3 class="landmark-title">Castro Theatre & District</h3>
+                <p class="landmark-snippet">Historic 1922 Spanish Colonial movie palace and the heart of San Francisco's historic LGBTQ+ civil rights movement.</p>
+                <a href="https://en.wikipedia.org/wiki/Castro_Theatre" target="_blank" rel="noopener" class="landmark-link">
+                  <span>Read on Wikipedia</span>
+                  <span>→</span>
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <footer class="card-footer">
+          <span>Source: Wikipedia GeoSearch API</span>
+          <span>Within 3.5 km (2.2 mi) radius</span>
+        </footer>
+      </article>
+
+      <!-- CARD 7: Progressive Disclosure Accordions (Col 12) -->
+      <article class="bento-card col-span-12" id="card-accordions" aria-labelledby="card-accordions-title">
+        <header class="card-header">
+          <div class="card-title-group">
+            <span class="card-icon">📊</span>
+            <h2 class="card-title" id="card-accordions-title">Deep Demographic Breakdown & Historical Multi-Vintage Trends</h2>
+          </div>
+          <span class="card-badge">Census ACS 2015 – 2022</span>
+        </header>
+
+        <div class="card-body">
+          <div class="accordions-container">
+
+            <!-- Accordion 1: Deep Demographic & Housing Cohorts -->
+            <details class="pulse-accordion" id="accordion-demographics">
+              <summary class="pulse-accordion-summary">
+                <div class="accordion-title-group">
+                  <span>👥 Detailed Demographic Cohorts & Housing Tenure</span>
+                </div>
+                <svg class="accordion-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </summary>
+              <div class="accordion-panel">
+                <div class="data-table-wrapper">
+                  <table class="data-table" aria-label="Detailed Cohorts Table">
+                    <thead>
+                      <tr>
+                        <th>Cohort Category</th>
+                        <th>Local Population</th>
+                        <th>Local Share (%)</th>
+                        <th>US Benchmark (%)</th>
+                        <th>Comparison</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td><strong>Age Cohort: Youth (&lt;18)</strong></td>
+                        <td class="font-mono tabular-nums">680</td>
+                        <td class="font-mono tabular-nums">14.1%</td>
+                        <td class="font-mono tabular-nums">22.1%</td>
+                        <td class="delta-warning">Lower (-8.0%)</td>
+                      </tr>
+                      <tr>
+                        <td><strong>Age Cohort: Young Adults (18–34)</strong></td>
+                        <td class="font-mono tabular-nums">1,940</td>
+                        <td class="font-mono tabular-nums">40.2%</td>
+                        <td class="font-mono tabular-nums">22.8%</td>
+                        <td class="delta-positive">Significantly Higher (+17.4%)</td>
+                      </tr>
+                      <tr>
+                        <td><strong>Age Cohort: Working Age (35–64)</strong></td>
+                        <td class="font-mono tabular-nums">1,680</td>
+                        <td class="font-mono tabular-nums">34.9%</td>
+                        <td class="font-mono tabular-nums">38.3%</td>
+                        <td class="delta-neutral">Similar (-3.4%)</td>
+                      </tr>
+                      <tr>
+                        <td><strong>Age Cohort: Seniors (65+)</strong></td>
+                        <td class="font-mono tabular-nums">520</td>
+                        <td class="font-mono tabular-nums">10.8%</td>
+                        <td class="font-mono tabular-nums">16.8%</td>
+                        <td class="delta-warning">Lower (-6.0%)</td>
+                      </tr>
+                      <tr>
+                        <td><strong>Housing: Renter-Occupied Units</strong></td>
+                        <td class="font-mono tabular-nums">1,820</td>
+                        <td class="font-mono tabular-nums">76.5%</td>
+                        <td class="font-mono tabular-nums">35.2%</td>
+                        <td class="delta-positive">High Renter Density</td>
+                      </tr>
+                      <tr>
+                        <td><strong>Housing: Owner-Occupied Units</strong></td>
+                        <td class="font-mono tabular-nums">560</td>
+                        <td class="font-mono tabular-nums">23.5%</td>
+                        <td class="font-mono tabular-nums">64.8%</td>
+                        <td class="delta-warning">Lower Homeownership</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </details>
+
+            <!-- Accordion 2: 2015 - 2022 Multi-Vintage Historical Growth Matrix -->
+            <details class="pulse-accordion" id="accordion-trends" open>
+              <summary class="pulse-accordion-summary">
+                <div class="accordion-title-group">
+                  <span>📈 2015 – 2022 Multi-Vintage Growth Matrix & Economic Trajectory</span>
+                </div>
+                <svg class="accordion-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </summary>
+              <div class="accordion-panel">
+                <div class="data-table-wrapper">
+                  <table class="data-table" aria-label="Multi-Vintage Historical Trends Table">
+                    <thead>
+                      <tr>
+                        <th>Metric</th>
+                        <th>2015 Baseline</th>
+                        <th>2020 Midpoint</th>
+                        <th>2022 Current</th>
+                        <th>7-Yr Delta (Δ%)</th>
+                        <th>Economic Assessment</th>
+                      </tr>
+                    </thead>
+                    <tbody id="trends-table-body">
+                      <tr>
+                        <td><strong>Median Home Value</strong></td>
+                        <td class="font-mono tabular-nums">$840,000</td>
+                        <td class="font-mono tabular-nums">$1,150,000</td>
+                        <td class="font-mono tabular-nums">$1,285,000</td>
+                        <td class="font-mono tabular-nums delta-negative"><strong>+53.0%</strong></td>
+                        <td><span class="badge-pill badge-resolution-zcta">High Housing Appreciation</span></td>
+                      </tr>
+                      <tr>
+                        <td><strong>Median Gross Rent</strong></td>
+                        <td class="font-mono tabular-nums">$1,620</td>
+                        <td class="font-mono tabular-nums">$1,980</td>
+                        <td class="font-mono tabular-nums">$2,150</td>
+                        <td class="font-mono tabular-nums delta-negative"><strong>+32.7%</strong></td>
+                        <td><span class="badge-pill badge-resolution-zcta">Moderate Rent Inflation</span></td>
+                      </tr>
+                      <tr>
+                        <td><strong>Median Household Income</strong></td>
+                        <td class="font-mono tabular-nums">$82,500</td>
+                        <td class="font-mono tabular-nums">$104,200</td>
+                        <td class="font-mono tabular-nums">$118,400</td>
+                        <td class="font-mono tabular-nums delta-positive"><strong>+43.5%</strong></td>
+                        <td><span class="badge-pill badge-resolution-tract">Strong Wage Growth</span></td>
+                      </tr>
+                      <tr>
+                        <td><strong>Bachelor's+ Attainment</strong></td>
+                        <td class="font-mono tabular-nums">54.2%</td>
+                        <td class="font-mono tabular-nums">59.8%</td>
+                        <td class="font-mono tabular-nums">62.4%</td>
+                        <td class="font-mono tabular-nums delta-positive"><strong>+8.2% pts</strong></td>
+                        <td><span class="badge-pill badge-resolution-tract">Upward Educational Mobility</span></td>
+                      </tr>
+                      <tr>
+                        <td><strong>Price-to-Income Ratio</strong></td>
+                        <td class="font-mono tabular-nums">10.18x</td>
+                        <td class="font-mono tabular-nums">11.04x</td>
+                        <td class="font-mono tabular-nums">10.85x</td>
+                        <td class="font-mono tabular-nums delta-warning"><strong>+6.6%</strong></td>
+                        <td><span class="badge-pill badge-resolution-county">Persistent Affordability Challenge</span></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </details>
+
+          </div>
+        </div>
+
+        <footer class="card-footer">
+          <span>Comparative Survey Analysis</span>
+          <span>Calculated via US Census 5-Year ACS Releases</span>
+        </footer>
+      </article>
+
+    </div>
+  </main>
+
+  <!-- =========================================================================
+       5. Fullscreen Interactive Map Modal
+       ========================================================================= -->
+  <div class="fullscreen-map-dialog" id="modal-map-fullscreen" role="dialog" aria-modal="true" aria-labelledby="fullscreen-map-title">
+    <div class="fullscreen-map-header">
+      <div class="brand-title">
+        <span>🗺️ Fullscreen Exploration:</span>
+        <span id="fullscreen-map-title" class="font-mono text-sm">Mission District, SF</span>
+      </div>
+      <div class="header-actions">
+        <button type="button" id="btn-fullscreen-locate" class="btn-header-primary" title="Locate via GPS">
+          <span>📍</span>
+          <span>Locate Me</span>
+        </button>
+        <button type="button" id="btn-close-fullscreen-map" class="btn-icon" title="Close Fullscreen Map (Esc)" aria-label="Close fullscreen map">
+          <span>✕</span>
+        </button>
+      </div>
+    </div>
+    <div class="fullscreen-map-body" id="map-fullscreen-container"></div>
+  </div>
+
+  <!-- =========================================================================
+       6. Slide-Out Saved Places & Recent Searches Drawer
+       ========================================================================= -->
+  <div class="drawer-backdrop" id="drawer-backdrop"></div>
+  <aside class="slide-drawer" id="drawer-saved-places" role="dialog" aria-modal="true" aria-labelledby="drawer-heading">
+    <div class="drawer-header">
+      <h2 class="drawer-title" id="drawer-heading">
+        <span>★ Saved Places</span>
+        <span id="drawer-saved-count" class="badge-pill badge-resolution-tract">0</span>
+      </h2>
+      <button type="button" id="btn-close-drawer" class="btn-icon" title="Close Drawer" aria-label="Close drawer">
+        <span>✕</span>
+      </button>
+    </div>
+
+    <div class="drawer-body">
+      <!-- Bookmarked Favorites Section -->
+      <section>
+        <h3 class="drawer-section-title">Starred Neighborhoods</h3>
+        <div id="saved-places-list" class="flex flex-col gap-2">
+          <p class="text-sm text-muted" id="saved-places-empty">No bookmarked places yet. Click "Save" on any location.</p>
+        </div>
+      </section>
+
+      <!-- Recent Searches Section -->
+      <section>
+        <h3 class="drawer-section-title">Recent Searches</h3>
+        <div id="recent-searches-list" class="flex flex-col gap-2">
+          <p class="text-sm text-muted" id="recent-searches-empty">No recent searches yet.</p>
+        </div>
+      </section>
+    </div>
+
+    <div class="drawer-footer">
+      <button type="button" id="btn-compare-selected" class="btn-header-primary w-full justify-center" disabled>
+        <span>⚖️ Compare Selected (0/2)</span>
+      </button>
+      <button type="button" id="btn-clear-saved" class="btn-icon" title="Clear all history" aria-label="Clear all">
+        <span>🗑️</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- =========================================================================
+       7. 2-Column Side-by-Side Compare Mode Modal
+       ========================================================================= -->
+  <div class="modal-backdrop" id="modal-compare" role="dialog" aria-modal="true" aria-labelledby="compare-modal-title">
+    <div class="compare-dialog">
+      <div class="compare-header">
+        <h2 class="drawer-title" id="compare-modal-title">
+          <span>⚖️ Side-by-Side Neighborhood Delta Scorecard</span>
+        </h2>
+        <button type="button" id="btn-close-compare" class="btn-icon" title="Close Comparison" aria-label="Close comparison">
+          <span>✕</span>
+        </button>
+      </div>
+      <div class="compare-body" id="compare-table-container">
+        <!-- Rendered dynamically by compare.js -->
+      </div>
+    </div>
+  </div>
+
+  <!-- =========================================================================
+       8. Toast Notifications Container
+       ========================================================================= -->
+  <div class="toast-container" id="toast-container" aria-live="polite"></div>
+
+  <!-- =========================================================================
+       9. Core Scripts & Modules
+       ========================================================================= -->
+  <!-- Leaflet GIS Library (CDN with fallback check) -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script>
+    if (typeof L === 'undefined') {
+      document.write('<script src="js/leaflet.js"><\/script>');
+    }
+  </script>
+
+  <!-- Application Main Entrypoint Module -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

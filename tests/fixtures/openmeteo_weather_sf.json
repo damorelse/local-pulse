@@ -1,0 +1,22 @@
+{
+  "latitude": 37.7749,
+  "longitude": -122.4194,
+  "generationtime_ms": 0.18,
+  "elevation": 19.0,
+  "current_units": {
+    "time": "iso8601",
+    "interval": "seconds",
+    "temperature_2m": "°C",
+    "relative_humidity_2m": "%",
+    "weather_code": "wmo code",
+    "wind_speed_10m": "km/h"
+  },
+  "current": {
+    "time": "2026-08-28T03:00",
+    "interval": 900,
+    "temperature_2m": 17.5,
+    "relative_humidity_2m": 72,
+    "weather_code": 1,
+    "wind_speed_10m": 14.8
+  }
+}

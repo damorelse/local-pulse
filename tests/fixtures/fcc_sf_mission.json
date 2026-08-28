@@ -1,0 +1,22 @@
+{
+  "Block": {
+    "FIPS": "060750229011000",
+    "bbox": [
+      -122.4248,
+      37.7549,
+      -122.4048,
+      37.7649
+    ]
+  },
+  "County": {
+    "FIPS": "06075",
+    "name": "San Francisco"
+  },
+  "State": {
+    "FIPS": "06",
+    "code": "CA",
+    "name": "California"
+  },
+  "status": "OK",
+  "executionTime": "0.014"
+}

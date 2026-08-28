@@ -1,0 +1,82 @@
+{
+  "null_island": {
+    "lat": 0.0,
+    "lng": 0.0,
+    "fcc_response": {
+      "Block": null,
+      "County": null,
+      "State": null,
+      "status": "No-FIPS",
+      "executionTime": "0.005"
+    },
+    "expected_error": "Coordinates outside US Census geographic coverage"
+  },
+  "polar_coordinates": {
+    "lat": 89.5,
+    "lng": -100.0,
+    "expected_status": "Out of Bounds",
+    "expected_error": "Latitude exceeds maximum bounding envelope (85.0)"
+  },
+  "ocean_california": {
+    "lat": 37.5,
+    "lng": -124.0,
+    "fcc_response": {
+      "Block": null,
+      "County": null,
+      "State": null,
+      "status": "No-FIPS"
+    }
+  },
+  "puerto_rico": {
+    "lat": 18.2208,
+    "lng": -66.5901,
+    "fcc_response": {
+      "Block": {
+        "FIPS": "720019501001000"
+      },
+      "County": {
+        "FIPS": "72001",
+        "name": "Adjuntas"
+      },
+      "State": {
+        "FIPS": "72",
+        "code": "PR",
+        "name": "Puerto Rico"
+      },
+      "status": "OK"
+    }
+  },
+  "census_sentinel_suppression": {
+    "raw_value": "-666666666",
+    "sanitized_value": null,
+    "display_text": "Data Suppressed"
+  },
+  "top_coded_home_value": {
+    "raw_value": "2000001",
+    "numeric_value": 2000001,
+    "formatted": "$2.0M+"
+  },
+  "zero_income": {
+    "median_income": 0,
+    "home_value": 450000,
+    "expected_affordability": null,
+    "expected_label": "N/A"
+  },
+  "monocultural_tract": {
+    "total_pop": 1500,
+    "counts": [1500, 0, 0, 0, 0, 0, 0, 0],
+    "expected_simpsons_d": 0.0,
+    "expected_normalized_score": 0.0
+  },
+  "extreme_aqi_hazardous": {
+    "us_aqi": 500,
+    "expected_category": "Hazardous",
+    "expected_color": "#881337",
+    "expected_angle": 180.0
+  },
+  "gateway_timeout_504": {
+    "status": 504,
+    "statusText": "Gateway Timeout",
+    "body": { "error": "Upstream Census API did not respond within 8000ms" }
+  }
+}

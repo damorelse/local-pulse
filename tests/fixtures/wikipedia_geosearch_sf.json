@@ -1,0 +1,43 @@
+{
+  "batchcomplete": "",
+  "query": {
+    "geosearch": [
+      {
+        "pageid": 56123,
+        "ns": 0,
+        "title": "Mission San Francisco de Asís",
+        "lat": 37.7644,
+        "lon": -122.4272,
+        "dist": 950.4,
+        "primary": ""
+      },
+      {
+        "pageid": 189234,
+        "ns": 0,
+        "title": "The Women's Building (San Francisco)",
+        "lat": 37.7619,
+        "lon": -122.4208,
+        "dist": 580.1,
+        "primary": ""
+      },
+      {
+        "pageid": 78234,
+        "ns": 0,
+        "title": "Mission District, San Francisco",
+        "lat": 37.7599,
+        "lon": -122.4148,
+        "dist": 120.0,
+        "primary": ""
+      },
+      {
+        "pageid": 99231,
+        "ns": 0,
+        "title": "Clarion Alley",
+        "lat": 37.7631,
+        "lon": -122.4195,
+        "dist": 410.2,
+        "primary": ""
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "Block": {
+    "FIPS": "484530011001000",
+    "bbox": [
+      -97.7491,
+      30.2622,
+      -97.7371,
+      30.2722
+    ]
+  },
+  "County": {
+    "FIPS": "48453",
+    "name": "Travis"
+  },
+  "State": {
+    "FIPS": "48",
+    "code": "TX",
+    "name": "Texas"
+  },
+  "status": "OK",
+  "executionTime": "0.012"
+}
