@@ -405,6 +405,93 @@ export function formatPercent(val, includeSign = false) {
   return `${sign}${num.toFixed(1)}%`;
 }
 
+/**
+ * Consumer Price Index (CPI-U) Multipliers to 2023 Constant Dollars
+ * Formula: Real 2023 Value = Nominal Value * (CPI_2023 / CPI_Year)
+ */
+export const CPI_U_FACTORS = {
+  2009: 1.422,
+  2010: 1.399,
+  2011: 1.356,
+  2012: 1.328,
+  2013: 1.309,
+  2014: 1.288,
+  2015: 1.286,
+  2016: 1.270,
+  2017: 1.243,
+  2018: 1.213,
+  2019: 1.192,
+  2020: 1.177,
+  2021: 1.124,
+  2022: 1.041,
+  2023: 1.000,
+};
+
+/**
+ * Calculates Inflation-Adjusted Real Value in 2023 Dollars
+ * @param {number|null} nominalVal
+ * @param {string|number} vintageYear
+ * @returns {number|null}
+ */
+export function calculateInflationAdjustedValue(nominalVal, vintageYear) {
+  if (nominalVal === null || nominalVal === undefined || isNaN(nominalVal) || nominalVal <= 0) {
+    return null;
+  }
+  const year = parseInt(vintageYear, 10);
+  const factor = CPI_U_FACTORS[year] || 1.0;
+  return Math.round(nominalVal * factor);
+}
+
+/**
+ * Returns macro-economic era context and historical annotations for any vintage
+ * @param {string|number} vintage
+ * @returns {{ title: string, subtitle: string, badge: string, icon: string, description: string }}
+ */
+export function getMacroEraContext(vintage) {
+  const y = parseInt(vintage, 10);
+  if (y <= 2011) {
+    return {
+      title: 'Great Recession & Housing Bottom',
+      subtitle: 'Foreclosure wave, credit crunch, and suppressed construction valuations nationwide.',
+      badge: '⚡ 2009–2011 Recession & Housing Bottom',
+      icon: '📉',
+      description: 'Post-financial crisis period marked by elevated unemployment, distressed property sales, and suppressed median home valuations across urban and suburban markets.'
+    };
+  } else if (y <= 2014) {
+    return {
+      title: 'Early Economic & Tech Expansion',
+      subtitle: 'Low interest rates and emerging tech growth fueling urban core housing recovery.',
+      badge: '⚡ 2012–2014 Early Economic Recovery',
+      icon: '🌱',
+      description: 'Sub-4% mortgage rates and technology sector expansion driving rapid housing demand and rental price rebound in major metropolitan centers.'
+    };
+  } else if (y <= 2019) {
+    return {
+      title: 'Prolonged Expansion & Affordability Squeeze',
+      subtitle: 'Sustained nationwide job growth and rising home price appreciation outstripping wages.',
+      badge: '⚡ 2015–2019 Prolonged Expansion & Tech Boom',
+      icon: '🚀',
+      description: 'Historical economic expansion with record-low unemployment, steady wage gains, and intense housing inventory shortages elevating affordability ratios.'
+    };
+  } else if (y <= 2021) {
+    return {
+      title: 'COVID-19 Pandemic & Remote Work Shift',
+      subtitle: 'Suburban migration surge, record-low rates, and urban rental adjustments.',
+      badge: '⚡ 2020–2021 Pandemic Shock & Remote Surge',
+      icon: '🏠',
+      description: 'Widespread transition to remote work driving rapid relocation to sunbelt markets and suburbs, accompanied by sub-3% mortgage rates and supply chain bottlenecks.'
+    };
+  } else {
+    return {
+      title: 'Post-Pandemic Inflation & Rate Tightening',
+      subtitle: '40-year peak consumer inflation followed by rapid Federal Reserve interest rate hikes.',
+      badge: '⚡ 2022–2023 Inflation Peak & Rate Tightening',
+      icon: '⚡',
+      description: 'Sharp mortgage rate spikes above 7% creating mortgage rate lock-in effects, while real household wages adjust against multi-decade high consumer prices.'
+    };
+  }
+}
+
 const CALCULATIONS = {
   calculateAffordabilityRatio,
   calculateRentBurden,
@@ -414,6 +501,9 @@ const CALCULATIONS = {
   calculateCAGR,
   calculateCommuteShares,
   calculateEducationShares,
+  calculateInflationAdjustedValue,
+  getMacroEraContext,
+  CPI_U_FACTORS,
   formatCurrency,
   formatNumber,
   formatPercent,

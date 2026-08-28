@@ -8,10 +8,10 @@
 // Import internal modules
 import { CONFIG } from './config.js';
 import { initTheme, toggleTheme, getCurrentTheme } from './theme.js';
-import { renderArcGauge, renderSegmentedBar, renderSparkline, render15YearTrendChart } from './charts.js';
+import { renderArcGauge, renderSegmentedBar, renderSparkline } from './charts.js';
 import { initMap } from './map.js';
 import { resolveCoordinates, searchAddress, reverseGeocode } from './geocoding.js';
-import { fetchCensusProfile, fetchMultiVintageTimeseries, loadBenchmarks } from './census.js';
+import { fetchCensusProfile, getMultiVintageProfile, loadBenchmarks } from './census.js';
 import { fetchEnvironmentalData } from './environment.js';
 import { fetchNearbyLandmarks } from './wikipedia.js';
 import {
@@ -23,6 +23,8 @@ import {
   calculateCAGR,
   calculateCommuteShares,
   calculateEducationShares,
+  calculateInflationAdjustedValue,
+  getMacroEraContext,
   formatCurrency,
   formatNumber,
   formatPercent
@@ -46,15 +48,18 @@ import { shareNeighborhood, showToastNotification } from './share.js';
   // Application State
   const AppState = {
     coords: { lat: 37.7599, lng: -122.4148 }, // Default: SF Mission
-    vintage: '2023',
+    vintage: '2022',
+    isInflationAdjusted: false,
     placeMeta: null,
     censusData: null,
-    multiVintageContainer: null,
-    allVintagesData: {}, // Cache for all fetched vintages (2009-2023)
-    activeChartMetric: 'homeValue', // 'homeValue' | 'medianIncome' | 'grossRent'
+    allVintagesData: {}, // Cache for all 15 years (2009-2023)
+    multiVintageProfile: null,
     environmentalData: null,
     landmarksData: [],
     isLoading: false,
+    isTimeLapsePlaying: false,
+    timeLapseSpeed: 1, // 1x or 2x
+    timeLapseTimer: null,
     abortController: null,
     selectedCompareIds: new Set(),
     mapController: null,
@@ -246,24 +251,23 @@ import { shareNeighborhood, showToastNotification } from './share.js';
         }
       };
 
-      // 2. Parallel fan-out: Fetch Multi-Vintage Timeseries (2009-2023), Environmental Data, and Wikipedia Landmarks
-      const [multiRes, envRes, wikiRes] = await Promise.allSettled([
-        fetchMultiVintageTimeseries(stateFips, countyFips, tractFips, zcta, { signal }),
+      // 2. Parallel fan-out: Fetch Multi-Vintage Census Profile (anchors eager, historical background), Environmental Data, and Wikipedia Landmarks
+      const [multiProfileRes, envRes, wikiRes] = await Promise.allSettled([
+        getMultiVintageProfile(stateFips, countyFips, tractFips, zcta, { signal }),
         fetchEnvironmentalData(lat, lng, { signal }),
         fetchNearbyLandmarks(lat, lng, 3500, 6, { signal })
       ]);
 
       if (signal.aborted) return;
 
-      const multiContainer = multiRes.status === 'fulfilled' ? multiRes.value : null;
-      AppState.multiVintageContainer = multiContainer;
-      AppState.allVintagesData = (multiContainer && multiContainer.vintages) || {};
-
-      AppState.censusData = AppState.allVintagesData[AppState.vintage] || AppState.allVintagesData['2023'] || AppState.allVintagesData['2022'] || Object.values(AppState.allVintagesData)[0];
+      const multiProfile = multiProfileRes.status === 'fulfilled' ? multiProfileRes.value : null;
+      AppState.multiVintageProfile = multiProfile;
+      AppState.allVintagesData = (multiProfile && multiProfile.vintages) ? { ...multiProfile.vintages } : {};
+      AppState.censusData = (multiProfile && multiProfile.getVintage(AppState.vintage)) || AppState.allVintagesData['2022'] || AppState.allVintagesData['2023'] || null;
       AppState.environmentalData = envRes.status === 'fulfilled' ? envRes.value : null;
       AppState.landmarksData = wikiRes.status === 'fulfilled' ? wikiRes.value : [];
 
-      // 3. Render all UI dashboard components (Instant paint with anchor vintages)
+      // 3. Render all UI dashboard components
       renderDashboard();
 
       // 4. Record to recent searches
@@ -278,17 +282,14 @@ import { shareNeighborhood, showToastNotification } from './share.js';
       // 5. Update bookmark state
       updateBookmarkButtonState();
 
-      // 6. Background Phase 2: Complete 15-Year historical hydration
-      if (multiContainer && !multiContainer.isComplete && typeof multiContainer.fetchHistorical === 'function') {
-        multiContainer.fetchHistorical().then(updated => {
-          if (AppState.coords.lat === lat && AppState.coords.lng === lng) {
-            AppState.allVintagesData = updated.vintages;
-            renderSparklines();
-            render15YearTrend();
-            renderHistoricalTrendsTable();
-          }
+      // 6. Trigger background historical hydration if not complete
+      if (multiProfile && !multiProfile.isComplete && typeof multiProfile.fetchHistorical === 'function') {
+        multiProfile.fetchHistorical((v, profile, timeSeries) => {
+          AppState.allVintagesData = { ...timeSeries };
+          renderSparklines();
+          renderAccordions((AppState.censusData && AppState.censusData.metrics) || {});
         }).catch(err => {
-          console.warn('[LocalPulse] Background timeseries hydration notice:', err);
+          console.warn('[LocalPulse] Background historical fetch notice:', err);
         });
       }
 
@@ -308,12 +309,22 @@ import { shareNeighborhood, showToastNotification } from './share.js';
    * Render all dashboard components with current state
    */
   function renderDashboard() {
-    const { placeMeta, censusData, environmentalData, landmarksData, coords, vintage } = AppState;
+    const { placeMeta, censusData, environmentalData, landmarksData, coords, vintage, isInflationAdjusted } = AppState;
     if (!placeMeta || !censusData) return;
 
-    const metrics = censusData.metrics || {};
+    const rawMetrics = censusData.metrics || {};
     const stateBm = censusData.stateBenchmark || {};
     const usBm = censusData.usBenchmark || {};
+
+    // Adjust metrics for inflation if enabled
+    const metrics = isInflationAdjusted ? {
+      ...rawMetrics,
+      homeValue: calculateInflationAdjustedValue(rawMetrics.homeValue, vintage),
+      medianHomeValue: calculateInflationAdjustedValue(rawMetrics.homeValue, vintage),
+      grossRent: calculateInflationAdjustedValue(rawMetrics.grossRent, vintage),
+      medianGrossRent: calculateInflationAdjustedValue(rawMetrics.grossRent, vintage),
+      medianIncome: calculateInflationAdjustedValue(rawMetrics.medianIncome, vintage),
+    } : rawMetrics;
 
     // 1. Pulse Hero Header & Metadata
     const heroTitle = document.getElementById('hero-location-name');
@@ -321,6 +332,8 @@ import { shareNeighborhood, showToastNotification } from './share.js';
     const heroFips = document.getElementById('hero-fips-badge');
     const heroCoords = document.getElementById('hero-coords-badge');
     const heroVintage = document.getElementById('hero-vintage-badge');
+    const heroEraBadge = document.getElementById('hero-era-context-badge');
+    const timelineEraText = document.getElementById('timeline-era-text');
 
     if (heroTitle) heroTitle.textContent = placeMeta.name;
     if (heroResolution) {
@@ -335,14 +348,25 @@ import { shareNeighborhood, showToastNotification } from './share.js';
       heroCoords.innerHTML = `<span class="font-mono">${coords.lat.toFixed(4)}° N, ${Math.abs(coords.lng).toFixed(4)}° W</span>`;
     }
     if (heroVintage) {
-      heroVintage.innerHTML = `<span>Survey: ACS 5-Year (${vintage})</span>`;
+      const inflTag = isInflationAdjusted ? ' <span class="text-cyan-400 font-bold">(Real 2023 $)</span>' : '';
+      heroVintage.innerHTML = `<span>Survey: ACS 5-Year (${vintage})${inflTag}</span>`;
+    }
+
+    // Macro-Economic Era Context
+    const eraContext = getMacroEraContext(vintage);
+    if (heroEraBadge) {
+      heroEraBadge.textContent = eraContext.badge;
+      heroEraBadge.title = eraContext.description;
+    }
+    if (timelineEraText) {
+      timelineEraText.textContent = `${eraContext.icon} ${eraContext.title} (${vintage})`;
     }
 
     // 2. Glanceable 3-Second Summary Pill Bar
-    renderGlanceablePills(metrics, stateBm, usBm, environmentalData);
+    renderGlanceablePills(metrics, stateBm, usBm, environmentalData, vintage, isInflationAdjusted);
 
     // 3. Card 1: Housing & Affordability
-    renderHousingCard(metrics, stateBm, usBm, vintage);
+    renderHousingCard(metrics, stateBm, usBm, vintage, isInflationAdjusted);
 
     // 4. Card 2: Map Card Footer Readout
     const mapCoordsReadout = document.getElementById('map-coords-readout');
@@ -362,28 +386,52 @@ import { shareNeighborhood, showToastNotification } from './share.js';
     // 8. Card 6: Cultural Landmarks
     renderLandmarksCard(landmarksData);
 
-    // 9. Card 7: Accordions (Demographic breakdown & Multi-vintage historical matrix)
+    // 9. Card 7: Accordions (Demographic breakdown & 15-Year historical matrix)
     renderAccordions(metrics, stateBm, usBm);
 
-    // 10. 15-Year Timeseries Micro-Charts & Interactive Historical Visualizations
+    // 10. Interactive Card Sparklines
     renderSparklines();
-    render15YearTrend();
-    renderHistoricalTrendsTable();
 
-    // 11. Update Active Preset Chip State
+    // 11. Update Active Preset Chip & Scrubber UI
     updatePresetChipsActive(coords.lat, coords.lng);
+    syncScrubberUI(vintage);
+  }
+
+  /**
+   * Sync Timeline Scrubber & Quick-Pill Active States
+   */
+  function syncScrubberUI(vintage) {
+    const slider = document.getElementById('timeline-scrubber-slider');
+    if (slider && slider.value !== vintage) {
+      slider.value = vintage;
+    }
+
+    const quickBtns = document.querySelectorAll('#vintage-selector .vintage-btn');
+    quickBtns.forEach(b => {
+      b.classList.toggle('active', b.dataset.vintage === vintage);
+    });
+
+    const tickBtns = document.querySelectorAll('.timeline-tick-btn');
+    tickBtns.forEach(t => {
+      const isActive = t.dataset.year === vintage;
+      t.classList.toggle('active', isActive);
+      if (isActive && t.scrollIntoView) {
+        t.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+      }
+    });
   }
 
   /**
    * Render Glanceable 3-Second Summary Pill Bar
    */
-  function renderGlanceablePills(metrics, stateBm, usBm, env) {
+  function renderGlanceablePills(metrics, stateBm, usBm, env, vintage, isInflationAdjusted) {
     // Pill 1: Home Value
     const homeEl = document.getElementById('glance-home-price');
     const homeDeltaEl = document.getElementById('glance-home-delta');
     if (homeEl) homeEl.textContent = formatCurrency(metrics.homeValue, false);
     if (homeDeltaEl) {
-      const usHome = usBm.homeValue || 281900;
+      const usRawHome = usBm.homeValue || 281900;
+      const usHome = isInflationAdjusted ? calculateInflationAdjustedValue(usRawHome, vintage) : usRawHome;
       const d = calculateBenchmarkDelta(metrics.homeValue, usHome);
       const isHigh = metrics.homeValue > usHome;
       homeDeltaEl.className = `glance-pill-delta ${isHigh ? 'delta-warning' : 'delta-positive'}`;
@@ -395,7 +443,8 @@ import { shareNeighborhood, showToastNotification } from './share.js';
     const incDeltaEl = document.getElementById('glance-income-delta');
     if (incEl) incEl.textContent = formatCurrency(metrics.medianIncome, false);
     if (incDeltaEl) {
-      const usInc = usBm.medianIncome || 75149;
+      const usRawInc = usBm.medianIncome || 75149;
+      const usInc = isInflationAdjusted ? calculateInflationAdjustedValue(usRawInc, vintage) : usRawInc;
       const d = calculateBenchmarkDelta(metrics.medianIncome, usInc);
       incDeltaEl.className = `glance-pill-delta ${d.isHigher ? 'delta-positive' : 'delta-warning'}`;
       incDeltaEl.innerHTML = `<span>${d.isHigher ? '▲' : '▼'} ${d.formatted} vs US</span>`;
@@ -428,7 +477,7 @@ import { shareNeighborhood, showToastNotification } from './share.js';
   /**
    * Render Card 1: Housing & Affordability
    */
-  function renderHousingCard(metrics, stateBm, usBm, vintage) {
+  function renderHousingCard(metrics, stateBm, usBm, vintage, isInflationAdjusted) {
     const homeVal = metrics.homeValue;
     const income = metrics.medianIncome;
     const grossRent = metrics.grossRent;
@@ -463,18 +512,22 @@ import { shareNeighborhood, showToastNotification } from './share.js';
     const statBurdenSub = document.getElementById('stat-burden-sub');
     const footerVintage = document.getElementById('footer-housing-vintage');
 
+    const usHome = isInflationAdjusted ? calculateInflationAdjustedValue(usBm.homeValue || 281900, vintage) : (usBm.homeValue || 281900);
+    const usRent = isInflationAdjusted ? calculateInflationAdjustedValue(usBm.grossRent || 1268, vintage) : (usBm.grossRent || 1268);
+    const usInc = isInflationAdjusted ? calculateInflationAdjustedValue(usBm.medianIncome || 75149, vintage) : (usBm.medianIncome || 75149);
+
     if (statHome) statHome.textContent = formatCurrency(homeVal);
-    if (statHomeSub) statHomeSub.textContent = `US: ${formatCurrency(usBm.homeValue || 281900)}`;
+    if (statHomeSub) statHomeSub.textContent = `US: ${formatCurrency(usHome)}`;
     if (statRent) statRent.textContent = grossRent ? `${formatCurrency(grossRent)} /mo` : 'N/A';
-    if (statRentSub) statRentSub.textContent = `US: ${formatCurrency(usBm.grossRent || 1268)} /mo`;
+    if (statRentSub) statRentSub.textContent = `US: ${formatCurrency(usRent)} /mo`;
     if (statInc) statInc.textContent = formatCurrency(income);
-    if (statIncSub) statIncSub.textContent = `US: ${formatCurrency(usBm.medianIncome || 75149)}`;
+    if (statIncSub) statIncSub.textContent = `US: ${formatCurrency(usInc)}`;
     if (statBurden) statBurden.textContent = rentBurden.percentage !== null ? `${rentBurden.percentage}%` : 'N/A';
     if (statBurdenSub) {
       statBurdenSub.textContent = rentBurden.label || 'Affordable';
       statBurdenSub.className = `stat-sub ${rentBurden.percentage > 30 ? 'delta-warning' : 'delta-positive'}`;
     }
-    if (footerVintage) footerVintage.textContent = `Vintage ${vintage}`;
+    if (footerVintage) footerVintage.textContent = `Vintage ${vintage}${isInflationAdjusted ? ' (Real 2023 $)' : ''}`;
   }
 
   /**
@@ -653,208 +706,199 @@ import { shareNeighborhood, showToastNotification } from './share.js';
   }
 
   /**
-   * Render Card 7: Accordions (Cohorts & Multi-Vintage Historical Matrix)
-   */
-  function renderAccordions(metrics, stateBm, usBm) {
-    // Left for potential demographic cohorts custom rendering
-  }
-
-  /**
-   * Render 15-Year Historical Sparklines on Housing, Rent, and Income cards
+   * Render Interactive 15-Year SVG Sparklines on Metric Cards
    */
   function renderSparklines() {
-    const ts = (AppState.multiVintageContainer && AppState.multiVintageContainer.timeseries) || null;
-    if (!ts) return;
+    const allData = AppState.allVintagesData || {};
+    const years = ['2009', '2010', '2011', '2012', '2013', '2014', '2015', '2016', '2017', '2018', '2019', '2020', '2021', '2022', '2023'];
 
-    const years = ts.years || [];
+    const homeSeries = [];
+    const popSeries = [];
+    const incSeries = [];
 
-    // 1. Home Value Sparkline
-    const homeSeries = ts.homeValue || [];
-    const validHome = homeSeries.filter(v => v !== null && !isNaN(v) && v > 0);
-    if (validHome.length >= 2) {
-      const spanYears = Math.max(1, years[years.length - 1] - years[0]);
-      const cagrHome = calculateCAGR(validHome[validHome.length - 1], validHome[0], spanYears);
-      const cagrEl = document.getElementById('sparkline-cagr-home');
-      if (cagrEl) cagrEl.textContent = `CAGR: ${cagrHome >= 0 ? '+' : ''}${cagrHome}%`;
-      renderSparkline('#sparkline-home-price', homeSeries, { strokeColor: '#38bdf8', fillColor: 'rgba(56, 189, 248, 0.15)' });
+    years.forEach(y => {
+      const entry = allData[y];
+      const m = (entry && entry.metrics) || null;
+      if (m) {
+        const rawHome = m.homeValue || m.medianHomeValue;
+        const homeVal = AppState.isInflationAdjusted ? calculateInflationAdjustedValue(rawHome, y) : rawHome;
+        if (homeVal) homeSeries.push({ year: y, value: homeVal });
+
+        const popVal = m.totalPopulation;
+        if (popVal) popSeries.push({ year: y, value: popVal });
+
+        const rawInc = m.medianIncome;
+        const incVal = AppState.isInflationAdjusted ? calculateInflationAdjustedValue(rawInc, y) : rawInc;
+        if (incVal) incSeries.push({ year: y, value: incVal });
+      }
+    });
+
+    // 1. Home Price Sparkline
+    if (homeSeries.length >= 2) {
+      const cagrEl = document.getElementById('sparkline-home-cagr');
+      if (cagrEl && homeSeries[0] && homeSeries[homeSeries.length - 1]) {
+        const cagr = calculateCAGR(homeSeries[homeSeries.length - 1].value, homeSeries[0].value, homeSeries.length - 1);
+        cagrEl.textContent = `${cagr >= 0 ? '+' : ''}${cagr}% CAGR`;
+      }
+      renderSparkline('#sparkline-home-price', homeSeries, {
+        activeYear: AppState.vintage,
+        color: '#38bdf8',
+        unit: '$',
+        formatValue: (v) => formatCurrency(v, true),
+        onSelectYear: (year) => selectVintage(year),
+      });
     }
 
-    // 2. Gross Rent Sparkline
-    const rentSeries = ts.grossRent || [];
-    const validRent = rentSeries.filter(v => v !== null && !isNaN(v) && v > 0);
-    if (validRent.length >= 2) {
-      const spanYears = Math.max(1, years[years.length - 1] - years[0]);
-      const cagrRent = calculateCAGR(validRent[validRent.length - 1], validRent[0], spanYears);
-      const cagrEl = document.getElementById('sparkline-cagr-rent');
-      if (cagrEl) cagrEl.textContent = `CAGR: ${cagrRent >= 0 ? '+' : ''}${cagrRent}%`;
-      renderSparkline('#sparkline-rent', rentSeries, { strokeColor: '#34d399', fillColor: 'rgba(52, 211, 153, 0.15)' });
+    // 2. Population Sparkline
+    if (popSeries.length >= 2) {
+      const cagrEl = document.getElementById('sparkline-pop-cagr');
+      if (cagrEl && popSeries[0] && popSeries[popSeries.length - 1]) {
+        const cagr = calculateCAGR(popSeries[popSeries.length - 1].value, popSeries[0].value, popSeries.length - 1);
+        cagrEl.textContent = `${cagr >= 0 ? '+' : ''}${cagr}% CAGR`;
+      }
+      renderSparkline('#sparkline-population', popSeries, {
+        activeYear: AppState.vintage,
+        color: '#10b981',
+        unit: '',
+        formatValue: (v) => formatNumber(v),
+        onSelectYear: (year) => selectVintage(year),
+      });
     }
 
-    // 3. Household Income Sparkline
-    const incSeries = ts.medianIncome || [];
-    const validInc = incSeries.filter(v => v !== null && !isNaN(v) && v > 0);
-    if (validInc.length >= 2) {
-      const spanYears = Math.max(1, years[years.length - 1] - years[0]);
-      const cagrInc = calculateCAGR(validInc[validInc.length - 1], validInc[0], spanYears);
-      const cagrEl = document.getElementById('sparkline-cagr-income');
-      if (cagrEl) cagrEl.textContent = `CAGR: ${cagrInc >= 0 ? '+' : ''}${cagrInc}%`;
-      renderSparkline('#sparkline-income', incSeries, { strokeColor: '#a78bfa', fillColor: 'rgba(167, 139, 250, 0.15)' });
+    // 3. Income Sparkline
+    if (incSeries.length >= 2) {
+      const cagrEl = document.getElementById('sparkline-income-cagr');
+      if (cagrEl && incSeries[0] && incSeries[incSeries.length - 1]) {
+        const cagr = calculateCAGR(incSeries[incSeries.length - 1].value, incSeries[0].value, incSeries.length - 1);
+        cagrEl.textContent = `${cagr >= 0 ? '+' : ''}${cagr}% CAGR`;
+      }
+      renderSparkline('#sparkline-income', incSeries, {
+        activeYear: AppState.vintage,
+        color: '#a78bfa',
+        unit: '$',
+        formatValue: (v) => formatCurrency(v, true),
+        onSelectYear: (year) => selectVintage(year),
+      });
     }
   }
 
   /**
-   * Render Interactive 15-Year Multi-Series SVG Trend Chart
+   * Render Card 7: Accordions (Cohorts & 15-Year Multi-Vintage Historical Matrix)
    */
-  function render15YearTrend() {
-    const ts = (AppState.multiVintageContainer && AppState.multiVintageContainer.timeseries) || null;
-    if (!ts) return;
+  function renderAccordions(metrics, stateBm, usBm) {
+    const trendsTbody = document.getElementById('trends-table-body');
+    if (!trendsTbody) return;
 
-    const metric = AppState.activeChartMetric || 'homeValue';
-    const years = ts.years || [2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023];
+    const allData = AppState.allVintagesData || {};
+    const isAdj = AppState.isInflationAdjusted;
 
-    // Local area series
-    const localValues = ts[metric] || [];
+    const data2009 = (allData['2009'] && allData['2009'].metrics) || {};
+    const data2015 = (allData['2015'] && allData['2015'].metrics) || {};
+    const data2020 = (allData['2020'] && allData['2020'].metrics) || {};
+    const data2023 = (allData['2023'] && allData['2023'].metrics) || (allData['2022'] && allData['2022'].metrics) || metrics;
 
-    // US Benchmark series
-    const usBm = (AppState.censusData && AppState.censusData.usBenchmark) || {};
-    let usSeries = [];
-    if (usBm.timeseries && Array.isArray(usBm.timeseries[metric])) {
-      usSeries = usBm.timeseries[metric];
-    } else {
-      const baseVal = usBm[metric] || (metric === 'homeValue' ? 281900 : metric === 'medianIncome' ? 75149 : 1268);
-      usSeries = years.map((y, idx) => Math.round(baseVal * Math.pow(1.035, idx - (years.length - 1))));
-    }
+    const rawHome09 = data2009.homeValue || Math.round((data2015.homeValue || 840000) * 0.78);
+    const rawHome15 = data2015.homeValue || 840000;
+    const rawHome20 = data2020.homeValue || 1150000;
+    const rawHome23 = data2023.homeValue || 1285000;
 
-    const metricLabels = {
-      homeValue: 'Median Home Price',
-      medianIncome: 'Median Household Income',
-      grossRent: 'Median Gross Rent',
-    };
+    const home09 = isAdj ? calculateInflationAdjustedValue(rawHome09, 2009) : rawHome09;
+    const home15 = isAdj ? calculateInflationAdjustedValue(rawHome15, 2015) : rawHome15;
+    const home20 = isAdj ? calculateInflationAdjustedValue(rawHome20, 2020) : rawHome20;
+    const home23 = isAdj ? calculateInflationAdjustedValue(rawHome23, 2023) : rawHome23;
+    const homeDelta = calculateGrowthDelta(home23, home09);
+    const homeCagr = calculateCAGR(home23, home09, 14);
 
-    const chartData = {
-      years,
-      series: [
-        {
-          name: `Local (${metricLabels[metric] || 'Metric'})`,
-          color: '#06b6d4',
-          values: localValues,
-        },
-        {
-          name: 'US National Benchmark',
-          color: '#94a3b8',
-          values: usSeries,
-        }
-      ]
-    };
+    const rawRent09 = data2009.grossRent || Math.round((data2015.grossRent || 1620) * 0.82);
+    const rawRent15 = data2015.grossRent || 1620;
+    const rawRent20 = data2020.grossRent || 1980;
+    const rawRent23 = data2023.grossRent || 2150;
 
-    render15YearTrendChart('#trend-chart-15yr', chartData);
-  }
+    const rent09 = isAdj ? calculateInflationAdjustedValue(rawRent09, 2009) : rawRent09;
+    const rent15 = isAdj ? calculateInflationAdjustedValue(rawRent15, 2015) : rawRent15;
+    const rent20 = isAdj ? calculateInflationAdjustedValue(rawRent20, 2020) : rawRent20;
+    const rent23 = isAdj ? calculateInflationAdjustedValue(rawRent23, 2023) : rawRent23;
+    const rentDelta = calculateGrowthDelta(rent23, rent09);
+    const rentCagr = calculateCAGR(rent23, rent09, 14);
 
-  /**
-   * Render Multi-Vintage Historical Growth Table (2009, 2015, 2020, 2023 + 14-Yr Overall Δ & CAGR)
-   */
-  function renderHistoricalTrendsTable() {
-    const tbody = document.getElementById('trends-table-body');
-    if (!tbody) return;
+    const rawInc09 = data2009.medianIncome || Math.round((data2015.medianIncome || 82500) * 0.80);
+    const rawInc15 = data2015.medianIncome || 82500;
+    const rawInc20 = data2020.medianIncome || 104200;
+    const rawInc23 = data2023.medianIncome || 118400;
 
-    const all = AppState.allVintagesData || {};
-    const d2023 = (all['2023'] && all['2023'].metrics) || (AppState.censusData && AppState.censusData.metrics) || {};
-    const d2020 = (all['2020'] && all['2020'].metrics) || {};
-    const d2015 = (all['2015'] && all['2015'].metrics) || {};
-    const d2009 = (all['2009'] && all['2009'].metrics) || {};
+    const inc09 = isAdj ? calculateInflationAdjustedValue(rawInc09, 2009) : rawInc09;
+    const inc15 = isAdj ? calculateInflationAdjustedValue(rawInc15, 2015) : rawInc15;
+    const inc20 = isAdj ? calculateInflationAdjustedValue(rawInc20, 2020) : rawInc20;
+    const inc23 = isAdj ? calculateInflationAdjustedValue(rawInc23, 2023) : rawInc23;
+    const incDelta = calculateGrowthDelta(inc23, inc09);
+    const incCagr = calculateCAGR(inc23, inc09, 14);
 
-    const home2023 = d2023.homeValue || 1285000;
-    const home2020 = d2020.homeValue || 1150000;
-    const home2015 = d2015.homeValue || 840000;
-    const home2009 = d2009.homeValue || Math.round(home2015 * 0.85);
-    const homeDelta14 = calculateGrowthDelta(home2023, home2009);
-    const homeCagr14 = calculateCAGR(home2023, home2009, 14);
+    const edu09 = (data2009.education && data2009.education.bachelorPlusPercent) || 48.5;
+    const edu15 = (data2015.education && data2015.education.bachelorPlusPercent) || 54.2;
+    const edu20 = (data2020.education && data2020.education.bachelorPlusPercent) || 59.8;
+    const edu23 = (data2023.education && data2023.education.bachelorPlusPercent) || 62.4;
+    const eduDelta = Number((edu23 - edu09).toFixed(1));
 
-    const rent2023 = d2023.grossRent || 2150;
-    const rent2020 = d2020.grossRent || 1980;
-    const rent2015 = d2015.grossRent || 1620;
-    const rent2009 = d2009.grossRent || Math.round(rent2015 * 0.82);
-    const rentDelta14 = calculateGrowthDelta(rent2023, rent2009);
-    const rentCagr14 = calculateCAGR(rent2023, rent2009, 14);
+    const aff09 = data2009.affordabilityRatio || Number((rawHome09 / rawInc09).toFixed(2));
+    const aff15 = data2015.affordabilityRatio || 10.18;
+    const aff20 = data2020.affordabilityRatio || 11.04;
+    const aff23 = data2023.affordabilityRatio || 10.85;
+    const affDelta = calculateGrowthDelta(aff23, aff09);
 
-    const inc2023 = d2023.medianIncome || 118400;
-    const inc2020 = d2020.medianIncome || 104200;
-    const inc2015 = d2015.medianIncome || 82500;
-    const inc2009 = d2009.medianIncome || Math.round(inc2015 * 0.80);
-    const incDelta14 = calculateGrowthDelta(inc2023, inc2009);
-    const incCagr14 = calculateCAGR(inc2023, inc2009, 14);
-
-    const edu2023 = (d2023.education && d2023.education.bachelorPlusPercent) || 62.4;
-    const edu2020 = (d2020.education && d2020.education.bachelorPlusPercent) || 59.8;
-    const edu2015 = (d2015.education && d2015.education.bachelorPlusPercent) || 54.2;
-    const edu2009 = (d2009.education && d2009.education.bachelorPlusPercent) || Math.round(edu2015 - 5.5);
-    const eduDelta14 = Number((edu2023 - edu2009).toFixed(1));
-
-    const aff2023 = d2023.affordabilityRatio || (home2023 && inc2023 ? Number((home2023 / inc2023).toFixed(2)) : 10.85);
-    const aff2020 = d2020.affordabilityRatio || (home2020 && inc2020 ? Number((home2020 / inc2020).toFixed(2)) : 11.04);
-    const aff2015 = d2015.affordabilityRatio || (home2015 && inc2015 ? Number((home2015 / inc2015).toFixed(2)) : 10.18);
-    const aff2009 = d2009.affordabilityRatio || (home2009 && inc2009 ? Number((home2009 / inc2009).toFixed(2)) : 10.20);
-    const affDelta14 = calculateGrowthDelta(aff2023, aff2009);
-
-    tbody.innerHTML = `
+    trendsTbody.innerHTML = `
       <tr>
-        <td><strong>Median Home Value</strong></td>
-        <td class="font-mono tabular-nums">${formatCurrency(home2009)}</td>
-        <td class="font-mono tabular-nums">${formatCurrency(home2015)}</td>
-        <td class="font-mono tabular-nums">${formatCurrency(home2020)}</td>
-        <td class="font-mono tabular-nums">${formatCurrency(home2023)}</td>
-        <td class="font-mono tabular-nums ${homeDelta14.percentageDelta > 50 ? 'delta-warning' : 'delta-positive'}">
-          <strong>${homeDelta14.formatted}</strong>
+        <td><strong>Median Home Value</strong> ${isAdj ? '<span class="text-xs text-cyan-400 font-normal">(Real 2023 $)</span>' : ''}</td>
+        <td class="font-mono tabular-nums">${formatCurrency(home09)}</td>
+        <td class="font-mono tabular-nums">${formatCurrency(home15)}</td>
+        <td class="font-mono tabular-nums">${formatCurrency(home20)}</td>
+        <td class="font-mono tabular-nums font-bold text-primary">${formatCurrency(home23)}</td>
+        <td class="font-mono tabular-nums ${homeDelta.percentageDelta > 30 ? 'delta-warning' : 'delta-positive'}">
+          <strong>${homeDelta.formatted}</strong> <span class="text-xs text-muted">(+${homeCagr}%/yr)</span>
         </td>
-        <td class="font-mono tabular-nums font-bold text-primary">${homeCagr14 >= 0 ? '+' : ''}${homeCagr14}%</td>
         <td><span class="badge-pill badge-resolution-zcta">High Appreciation</span></td>
       </tr>
       <tr>
-        <td><strong>Median Gross Rent</strong></td>
-        <td class="font-mono tabular-nums">${formatCurrency(rent2009)}</td>
-        <td class="font-mono tabular-nums">${formatCurrency(rent2015)}</td>
-        <td class="font-mono tabular-nums">${formatCurrency(rent2020)}</td>
-        <td class="font-mono tabular-nums">${formatCurrency(rent2023)}</td>
-        <td class="font-mono tabular-nums ${rentDelta14.percentageDelta > 40 ? 'delta-warning' : 'delta-positive'}">
-          <strong>${rentDelta14.formatted}</strong>
+        <td><strong>Median Gross Rent</strong> ${isAdj ? '<span class="text-xs text-cyan-400 font-normal">(Real 2023 $)</span>' : ''}</td>
+        <td class="font-mono tabular-nums">${formatCurrency(rent09)}</td>
+        <td class="font-mono tabular-nums">${formatCurrency(rent15)}</td>
+        <td class="font-mono tabular-nums">${formatCurrency(rent20)}</td>
+        <td class="font-mono tabular-nums font-bold text-primary">${formatCurrency(rent23)}</td>
+        <td class="font-mono tabular-nums ${rentDelta.percentageDelta > 25 ? 'delta-warning' : 'delta-positive'}">
+          <strong>${rentDelta.formatted}</strong> <span class="text-xs text-muted">(+${rentCagr}%/yr)</span>
         </td>
-        <td class="font-mono tabular-nums font-bold text-primary">${rentCagr14 >= 0 ? '+' : ''}${rentCagr14}%</td>
         <td><span class="badge-pill badge-resolution-zcta">Rent Inflation</span></td>
       </tr>
       <tr>
-        <td><strong>Median Household Income</strong></td>
-        <td class="font-mono tabular-nums">${formatCurrency(inc2009)}</td>
-        <td class="font-mono tabular-nums">${formatCurrency(inc2015)}</td>
-        <td class="font-mono tabular-nums">${formatCurrency(inc2020)}</td>
-        <td class="font-mono tabular-nums">${formatCurrency(inc2023)}</td>
+        <td><strong>Median Household Income</strong> ${isAdj ? '<span class="text-xs text-cyan-400 font-normal">(Real 2023 $)</span>' : ''}</td>
+        <td class="font-mono tabular-nums">${formatCurrency(inc09)}</td>
+        <td class="font-mono tabular-nums">${formatCurrency(inc15)}</td>
+        <td class="font-mono tabular-nums">${formatCurrency(inc20)}</td>
+        <td class="font-mono tabular-nums font-bold text-primary">${formatCurrency(inc23)}</td>
         <td class="font-mono tabular-nums delta-positive">
-          <strong>${incDelta14.formatted}</strong>
+          <strong>${incDelta.formatted}</strong> <span class="text-xs text-muted">(+${incCagr}%/yr)</span>
         </td>
-        <td class="font-mono tabular-nums font-bold delta-positive">${incCagr14 >= 0 ? '+' : ''}${incCagr14}%</td>
         <td><span class="badge-pill badge-resolution-tract">Strong Wage Growth</span></td>
       </tr>
       <tr>
         <td><strong>Bachelor's+ Attainment</strong></td>
-        <td class="font-mono tabular-nums">${edu2009}%</td>
-        <td class="font-mono tabular-nums">${edu2015}%</td>
-        <td class="font-mono tabular-nums">${edu2020}%</td>
-        <td class="font-mono tabular-nums">${edu2023}%</td>
+        <td class="font-mono tabular-nums">${edu09}%</td>
+        <td class="font-mono tabular-nums">${edu15}%</td>
+        <td class="font-mono tabular-nums">${edu20}%</td>
+        <td class="font-mono tabular-nums font-bold text-primary">${edu23}%</td>
         <td class="font-mono tabular-nums delta-positive">
-          <strong>+${eduDelta14}% pts</strong>
+          <strong>+${eduDelta}% pts</strong>
         </td>
-        <td class="font-mono tabular-nums font-bold delta-positive">+${(eduDelta14 / 14).toFixed(1)}%/yr</td>
         <td><span class="badge-pill badge-resolution-tract">Upward Educational Mobility</span></td>
       </tr>
       <tr>
         <td><strong>Price-to-Income Ratio</strong></td>
-        <td class="font-mono tabular-nums">${aff2009}x</td>
-        <td class="font-mono tabular-nums">${aff2015}x</td>
-        <td class="font-mono tabular-nums">${aff2020}x</td>
-        <td class="font-mono tabular-nums">${aff2023}x</td>
+        <td class="font-mono tabular-nums">${aff09}x</td>
+        <td class="font-mono tabular-nums">${aff15}x</td>
+        <td class="font-mono tabular-nums">${aff20}x</td>
+        <td class="font-mono tabular-nums font-bold text-primary">${aff23}x</td>
         <td class="font-mono tabular-nums delta-warning">
-          <strong>${affDelta14.formatted}</strong>
+          <strong>${affDelta.formatted}</strong>
         </td>
-        <td class="font-mono tabular-nums font-bold text-muted">${aff2023 > aff2009 ? 'Expanding' : 'Compressing'}</td>
         <td><span class="badge-pill badge-resolution-county">Cost Burden Trend</span></td>
       </tr>
     `;
@@ -1396,86 +1440,283 @@ import { shareNeighborhood, showToastNotification } from './share.js';
   }
 
   /**
-   * Handle Survey Vintage Switch across quick pills or dropdown
+   * Select a specific survey vintage and re-render dashboard
+   * @param {string} vintage
    */
-  async function handleVintageChange(selectedVintage) {
-    if (!selectedVintage || selectedVintage === AppState.vintage) return;
+  async function selectVintage(vintage) {
+    if (!vintage || !CONFIG.VINTAGES.includes(vintage)) return;
+    AppState.vintage = vintage;
 
-    AppState.vintage = selectedVintage;
-
-    // Update active button state
-    const buttons = document.querySelectorAll('#vintage-selector .vintage-btn');
-    buttons.forEach(b => b.classList.toggle('active', b.dataset.vintage === selectedVintage));
-
-    // Update dropdown select state
-    const select = document.getElementById('vintage-dropdown-select');
-    if (select) {
-      select.value = selectedVintage;
-    }
-
-    // If data for selected vintage not yet loaded, fetch it
-    if (!AppState.allVintagesData[selectedVintage] && AppState.placeMeta && AppState.placeMeta.fips) {
+    // If data for vintage not yet in memory, fetch on-demand
+    if (!AppState.allVintagesData[vintage] && AppState.placeMeta && AppState.placeMeta.fips) {
       setSkeletonLoading(true);
       const f = AppState.placeMeta.fips;
       try {
-        AppState.allVintagesData[selectedVintage] = await fetchCensusProfile(f.state, f.county, f.tract, f.zcta, selectedVintage);
+        const fetched = await fetchCensusProfile(f.state, f.county, f.tract, f.zcta, vintage);
+        if (fetched) {
+          AppState.allVintagesData[vintage] = fetched;
+        }
       } catch (err) {
-        console.warn('[LocalPulse] Failed to fetch vintage on demand:', err);
+        console.warn('[LocalPulse] On-demand vintage fetch error:', err);
       }
       setSkeletonLoading(false);
     }
 
-    AppState.censusData = AppState.allVintagesData[selectedVintage] || AppState.censusData;
+    AppState.censusData = AppState.allVintagesData[vintage] || AppState.censusData;
     renderDashboard();
-    showToastNotification(`📊 Switched to ACS 5-Year (${selectedVintage}) survey data`, 2000, 'info');
   }
 
   /**
-   * Setup Survey Vintage Switcher (Quick Pills + All-Years Dropdown)
+   * Time-Lapse Playback Engine
+   */
+  function toggleTimeLapse() {
+    if (AppState.isTimeLapsePlaying) {
+      stopTimeLapse();
+    } else {
+      startTimeLapse();
+    }
+  }
+
+  function startTimeLapse() {
+    AppState.isTimeLapsePlaying = true;
+    const playBtn = document.getElementById('btn-timelapse-play');
+    const playIcon = document.getElementById('play-icon');
+    const playLabel = document.getElementById('play-label');
+
+    if (playBtn) playBtn.classList.add('playing');
+    if (playIcon) playIcon.textContent = '⏸';
+    if (playLabel) playLabel.textContent = 'Pause';
+
+    showToastNotification('▶ Playing 15-Year Historical Time-Lapse (2009–2023)', 2000, 'info');
+
+    // If currently at latest year (2023), loop back to 2009
+    let currentYear = parseInt(AppState.vintage, 10);
+    if (currentYear >= 2023) {
+      currentYear = 2009;
+      selectVintage('2009');
+    }
+
+    const advanceStep = () => {
+      if (!AppState.isTimeLapsePlaying) return;
+      currentYear++;
+      if (currentYear > 2023) {
+        stopTimeLapse();
+        showToastNotification('✅ Time-Lapse completed!', 2500, 'success');
+        return;
+      }
+      selectVintage(String(currentYear));
+      const intervalMs = Math.round(1000 / (AppState.timeLapseSpeed || 1));
+      AppState.timeLapseTimer = setTimeout(advanceStep, intervalMs);
+    };
+
+    const intervalMs = Math.round(1000 / (AppState.timeLapseSpeed || 1));
+    AppState.timeLapseTimer = setTimeout(advanceStep, intervalMs);
+  }
+
+  function stopTimeLapse() {
+    AppState.isTimeLapsePlaying = false;
+    if (AppState.timeLapseTimer) {
+      clearTimeout(AppState.timeLapseTimer);
+      AppState.timeLapseTimer = null;
+    }
+    const playBtn = document.getElementById('btn-timelapse-play');
+    const playIcon = document.getElementById('play-icon');
+    const playLabel = document.getElementById('play-label');
+
+    if (playBtn) playBtn.classList.remove('playing');
+    if (playIcon) playIcon.textContent = '▶';
+    if (playLabel) playLabel.textContent = 'Play Time-Lapse';
+  }
+
+  /**
+   * Exports full 15-year dataset to CSV download
+   */
+  function export15YearCSV() {
+    const { placeMeta, allVintagesData } = AppState;
+    if (!placeMeta || !allVintagesData) {
+      showToastNotification('⚠️ No location data available to export', 2500, 'warning');
+      return;
+    }
+
+    const years = ['2009', '2010', '2011', '2012', '2013', '2014', '2015', '2016', '2017', '2018', '2019', '2020', '2021', '2022', '2023'];
+    const headers = [
+      'Vintage',
+      'Location',
+      'State',
+      'FIPS_State',
+      'FIPS_County',
+      'FIPS_Tract',
+      'Resolution',
+      'Median_Home_Value_Nominal',
+      'Median_Home_Value_Real_2023_USD',
+      'Median_Gross_Rent_Nominal',
+      'Median_Household_Income_Nominal',
+      'Median_Household_Income_Real_2023_USD',
+      'Affordability_Ratio',
+      'Total_Population',
+      'Median_Age',
+      'Bachelors_Plus_Pct',
+      'Green_Commute_Pct',
+      'Simpsons_Diversity_Index',
+    ];
+
+    const f = placeMeta.fips || {};
+    const rows = [headers.join(',')];
+
+    years.forEach(y => {
+      const entry = allVintagesData[y];
+      const m = (entry && entry.metrics) || {};
+      const homeNom = m.homeValue || '';
+      const homeReal = homeNom ? calculateInflationAdjustedValue(homeNom, y) : '';
+      const rentNom = m.grossRent || '';
+      const incNom = m.medianIncome || '';
+      const incReal = incNom ? calculateInflationAdjustedValue(incNom, y) : '';
+      const affRatio = m.affordabilityRatio || '';
+      const pop = m.totalPopulation || '';
+      const age = m.medianAge || '';
+      const bach = (m.education && m.education.bachelorPlusPercent) || '';
+      const green = (m.commute && m.commute.greenCommuteRate) || '';
+      const div = m.diversityIndex || '';
+
+      const row = [
+        y,
+        `"${placeMeta.name.replace(/"/g, '""')}"`,
+        placeMeta.stateCode || '',
+        f.state || '',
+        f.county || '',
+        f.tract || '',
+        entry ? entry.resolution || 'tract' : 'unknown',
+        homeNom,
+        homeReal,
+        rentNom,
+        incNom,
+        incReal,
+        affRatio,
+        pop,
+        age,
+        bach,
+        green,
+        div,
+      ];
+      rows.push(row.join(','));
+    });
+
+    const csvContent = 'data:text/csv;charset=utf-8,' + encodeURIComponent(rows.join('\n'));
+    const link = document.createElement('a');
+    link.setAttribute('href', csvContent);
+    const safeName = (placeMeta.name || 'neighborhood').toLowerCase().replace(/[^a-z0-9]/g, '_');
+    link.setAttribute('download', `local_pulse_${safeName}_15yr_timeseries_2009_2023.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    showToastNotification('📥 Downloaded 15-Year CSV dataset!', 3000, 'success');
+  }
+
+  /**
+   * Setup Survey Vintage Switcher (Quick-Pill buttons)
    */
   function setupVintageSwitcher() {
-    // 1. Quick Pills
     const buttons = document.querySelectorAll('#vintage-selector .vintage-btn');
     buttons.forEach(btn => {
+      if (btn.id === 'btn-toggle-timeline') return;
       btn.addEventListener('click', async (e) => {
         e.preventDefault();
         const vintage = btn.dataset.vintage;
-        await handleVintageChange(vintage);
+        if (!vintage || vintage === AppState.vintage) return;
+        await selectVintage(vintage);
+        showToastNotification(`📊 Switched to ACS 5-Year (${vintage}) survey data`, 2000, 'info');
+      });
+    });
+  }
+
+  /**
+   * Setup 15-Year Interactive Timeline Scrubber & Controls
+   */
+  function setupTimelineScrubber() {
+    const toggleBtn = document.getElementById('btn-toggle-timeline');
+    const scrubberWrapper = document.getElementById('timeline-scrubber-wrapper');
+    const slider = document.getElementById('timeline-scrubber-slider');
+    const tickBtns = document.querySelectorAll('.timeline-tick-btn');
+    const playBtn = document.getElementById('btn-timelapse-play');
+    const speedBtn = document.getElementById('btn-timelapse-speed');
+
+    // 1. Expand/Collapse Scrubber
+    if (toggleBtn && scrubberWrapper) {
+      toggleBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        scrubberWrapper.classList.toggle('hidden');
+        const isExpanded = !scrubberWrapper.classList.contains('hidden');
+        toggleBtn.classList.toggle('active', isExpanded);
+        toggleBtn.querySelector('span').textContent = isExpanded ? '▴ Hide Timeline' : '▾ 2009–2023 Timeline';
+      });
+    }
+
+    // 2. Slider Input
+    if (slider) {
+      slider.addEventListener('input', () => {
+        stopTimeLapse();
+        selectVintage(slider.value);
+      });
+    }
+
+    // 3. Ticks Carousel Buttons
+    tickBtns.forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        stopTimeLapse();
+        const yr = btn.dataset.year;
+        selectVintage(yr);
       });
     });
 
-    // 2. All-Years Dropdown Select
-    const select = document.getElementById('vintage-dropdown-select');
-    if (select) {
-      select.addEventListener('change', async (e) => {
-        const vintage = e.target.value;
-        await handleVintageChange(vintage);
+    // 4. Play/Pause Time-Lapse Button
+    if (playBtn) {
+      playBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        toggleTimeLapse();
+      });
+    }
+
+    // 5. Playback Speed Toggle Button (1x / 2x)
+    if (speedBtn) {
+      speedBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        AppState.timeLapseSpeed = AppState.timeLapseSpeed === 1 ? 2 : 1;
+        speedBtn.textContent = `${AppState.timeLapseSpeed}x`;
+        showToastNotification(`⏱️ Playback speed: ${AppState.timeLapseSpeed}x`, 1500, 'info');
       });
     }
   }
 
   /**
-   * Setup 15-Year Interactive Chart Metric Toggles
+   * Setup 1-Tap Inflation Toggle (Nominal vs Real 2023 $)
    */
-  function setupChartMetricToggles() {
-    const toggles = document.querySelectorAll('#chart-metric-toggles .metric-toggle-btn');
-    toggles.forEach(btn => {
+  function setupInflationToggle() {
+    const buttons = document.querySelectorAll('#inflation-toggle-group .inflation-toggle-btn');
+    buttons.forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.preventDefault();
-        const metric = btn.dataset.metric;
-        if (!metric || metric === AppState.activeChartMetric) return;
+        const mode = btn.dataset.inflation;
+        const isReal = mode === 'real';
+        if (AppState.isInflationAdjusted === isReal) return;
 
-        toggles.forEach(b => b.classList.remove('active'));
+        buttons.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
 
-        AppState.activeChartMetric = metric;
-        render15YearTrend();
+        AppState.isInflationAdjusted = isReal;
+        renderDashboard();
+
+        const toastMsg = isReal
+          ? '📈 Displaying Real 2023 Constant Dollars (CPI-U Adjusted)'
+          : '💵 Displaying Nominal As-Reported Survey Dollars';
+        showToastNotification(toastMsg, 2500, 'info');
       });
     });
   }
 
   /**
-   * Setup Bookmark & Share Buttons
+   * Setup Bookmark, Share, CSV Export & Compare Buttons
    */
   function setupActionButtons() {
     // 1. Bookmark Place Button
@@ -1551,7 +1792,17 @@ import { shareNeighborhood, showToastNotification } from './share.js';
       });
     }
 
-    // 3. Compare Selected Button
+    // 3. Download 15-Year CSV Button
+    const downloadCsvBtn = document.getElementById('btn-download-csv');
+    if (downloadCsvBtn) {
+      downloadCsvBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        export15YearCSV();
+      });
+    }
+
+    // 4. Compare Selected Button
     const compareBtn = document.getElementById('btn-compare-selected');
     if (compareBtn) {
       compareBtn.addEventListener('click', (e) => {
@@ -1570,7 +1821,7 @@ import { shareNeighborhood, showToastNotification } from './share.js';
       });
     }
 
-    // 4. Clear All Saved Places Button
+    // 5. Clear All Saved Places Button
     const clearSavedBtn = document.getElementById('btn-clear-saved');
     if (clearSavedBtn) {
       clearSavedBtn.addEventListener('click', (e) => {
@@ -1586,8 +1837,6 @@ import { shareNeighborhood, showToastNotification } from './share.js';
         }
       });
     }
-
-
   }
 
   /**
@@ -1630,7 +1879,8 @@ import { shareNeighborhood, showToastNotification } from './share.js';
     setupGeolocation();
     setupPresetChips();
     setupVintageSwitcher();
-    setupChartMetricToggles();
+    setupTimelineScrubber();
+    setupInflationToggle();
     setupDrawerListeners();
     setupFullscreenMapListeners();
     setupBrandLogo();
@@ -1646,13 +1896,9 @@ import { shareNeighborhood, showToastNotification } from './share.js';
       if (!isNaN(urlLat) && !isNaN(urlLng)) {
         AppState.coords = { lat: urlLat, lng: urlLng };
       }
-      const allVintages = (CONFIG && CONFIG.VINTAGES) || ['2023', '2022', '2021', '2020', '2019', '2018', '2017', '2016', '2015', '2014', '2013', '2012', '2011', '2010', '2009'];
-      if (urlVintage && allVintages.includes(urlVintage)) {
+      if (urlVintage && CONFIG.VINTAGES.includes(urlVintage)) {
         AppState.vintage = urlVintage;
-        const vBtns = document.querySelectorAll('#vintage-selector .vintage-btn');
-        vBtns.forEach(b => b.classList.toggle('active', b.dataset.vintage === urlVintage));
-        const select = document.getElementById('vintage-dropdown-select');
-        if (select) select.value = urlVintage;
+        syncScrubberUI(urlVintage);
       }
     } catch (e) {
       // Ignore

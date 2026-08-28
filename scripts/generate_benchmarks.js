@@ -191,12 +191,31 @@ function getInterpolatedState(s, year) {
   };
 }
 
+const CPI_U_FACTORS = {
+  2009: 1.422,
+  2010: 1.399,
+  2011: 1.356,
+  2012: 1.328,
+  2013: 1.309,
+  2014: 1.288,
+  2015: 1.286,
+  2016: 1.270,
+  2017: 1.243,
+  2018: 1.213,
+  2019: 1.192,
+  2020: 1.177,
+  2021: 1.124,
+  2022: 1.041,
+  2023: 1.000,
+};
+
 const benchmarks = {
   metadata: {
     generatedAt: new Date().toISOString(),
     source: 'U.S. Census Bureau ACS 5-Year Estimates (2009–2023)',
     jurisdictionCount: STATES.length,
     vintages: YEARS.map(String),
+    cpiFactors: CPI_U_FACTORS,
   },
   jurisdictions: {},
 };

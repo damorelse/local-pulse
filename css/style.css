@@ -771,50 +771,6 @@ img, svg {
   box-shadow: 0 1px 4px rgba(6, 182, 212, 0.4);
 }
 
-/* Vintage Dropdown Select */
-.vintage-dropdown-wrapper {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  border-left: 1px solid var(--border-subtle);
-  margin-left: 2px;
-  padding-left: 2px;
-}
-
-.vintage-dropdown-select {
-  appearance: none;
-  -webkit-appearance: none;
-  background-color: transparent;
-  color: var(--text-secondary);
-  border: none;
-  padding: 0.3rem 1.6rem 0.3rem 0.6rem;
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-  border-radius: var(--radius-full);
-  transition: all var(--transition-fast);
-  outline: none;
-}
-
-.vintage-dropdown-select:hover {
-  color: var(--text-primary);
-  background-color: var(--bg-card-hover);
-}
-
-.vintage-dropdown-select:focus {
-  background-color: var(--bg-card-hover);
-  color: var(--text-primary);
-}
-
-.vintage-dropdown-wrapper::after {
-  content: "▾";
-  position: absolute;
-  right: 0.55rem;
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  pointer-events: none;
-}
-
 /* Hero Action Buttons */
 .hero-action-btn {
   display: inline-flex;
@@ -1688,117 +1644,249 @@ img, svg {
 }
 
 /* --------------------------------------------------------------------------
-   12. 15-Year Timeseries Micro-Charts & Interactive Trend Components
+   12. 15-Year Timeline Scrubber & Time-Lapse Carousel (2009–2023)
    -------------------------------------------------------------------------- */
-.sparklines-card-section {
+.badge-era {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(6, 182, 212, 0.15));
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: var(--color-amber-400);
+  font-weight: 600;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-full);
+}
+
+.timeline-toggle-btn {
+  border-color: rgba(56, 189, 248, 0.3) !important;
+  color: var(--color-cyan-400) !important;
+}
+
+.timeline-toggle-btn:hover {
+  background-color: var(--color-cyan-bg) !important;
+}
+
+.inflation-toggle-group {
   display: flex;
-  flex-direction: column;
-  gap: 0.65rem;
-  margin-top: 1rem;
-  padding-top: 0.85rem;
-  border-top: 1px solid var(--border-subtle);
-}
-
-.sparkline-wrapper {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.sparkline-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.sparkline-container {
-  width: 100%;
-  height: 30px;
-  display: flex;
-  align-items: center;
-}
-
-.sparkline-svg {
-  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
-}
-
-/* 15-Year Interactive Chart */
-.chart-container-15yr {
   background-color: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  padding: 1rem;
-  margin-bottom: 1rem;
-}
-
-.chart-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
-}
-
-.chart-title-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-
-.chart-metric-toggles {
-  display: inline-flex;
-  background-color: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-full);
   padding: 2px;
   gap: 2px;
 }
 
-.metric-toggle-btn {
-  padding: 0.25rem 0.65rem;
-  font-size: 0.75rem;
-  font-weight: 600;
+.inflation-toggle-btn {
+  background: transparent;
   border: none;
   border-radius: var(--radius-full);
-  background: transparent;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
   color: var(--text-secondary);
   cursor: pointer;
   transition: all var(--transition-fast);
 }
 
-.metric-toggle-btn:hover {
+.inflation-toggle-btn:hover {
   color: var(--text-primary);
 }
 
-.metric-toggle-btn.active {
-  background-color: var(--color-cyan-500);
-  color: white;
-  box-shadow: 0 1px 3px rgba(6, 182, 212, 0.4);
+.inflation-toggle-btn.active {
+  background-color: var(--color-cyan-400);
+  color: #020617;
+  font-weight: 700;
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.4);
 }
 
-.trend-chart-container {
-  width: 100%;
-  min-height: 220px;
+/* Scrubber Container & Carousel */
+.timeline-scrubber-wrapper {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  padding: 0.85rem 1rem;
+  margin-top: 0.85rem;
+  margin-bottom: 0.5rem;
+  box-shadow: var(--shadow-sm);
+  animation: scrubber-slide-down 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.trend-chart-wrapper {
-  width: 100%;
+@keyframes scrubber-slide-down {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.timeline-playback-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.btn-timelapse-play {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: linear-gradient(135deg, var(--color-sky-500), var(--color-cyan-500));
+  border: none;
+  border-radius: var(--radius-full);
+  color: #ffffff;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(6, 182, 212, 0.3);
+  transition: transform var(--transition-fast), filter var(--transition-fast);
+}
+
+.btn-timelapse-play:hover {
+  filter: brightness(1.1);
+  transform: scale(1.02);
+}
+
+.btn-timelapse-play.playing {
+  background: linear-gradient(135deg, var(--color-rose-500), var(--color-amber-500));
+}
+
+.btn-timelapse-speed {
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.btn-timelapse-speed:hover {
+  border-color: var(--color-cyan-400);
+  color: var(--color-cyan-400);
+}
+
+.timeline-active-era {
+  color: var(--color-amber-400);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+/* Slider Track */
+.timeline-slider-container {
   display: flex;
   flex-direction: column;
+  gap: 0.5rem;
 }
 
-.mt-3 { margin-top: 0.75rem !important; }
-.mt-4 { margin-top: 1rem !important; }
-.mb-2 { margin-bottom: 0.5rem !important; }
-.mb-4 { margin-bottom: 1rem !important; }
-.gap-1 { gap: 0.25rem !important; }
-.gap-2 { gap: 0.5rem !important; }
-.gap-4 { gap: 1rem !important; }
-.text-xs { font-size: 0.75rem !important; }
-.text-sm { font-size: 0.875rem !important; }
-.font-bold { font-weight: 700 !important; }
-.font-semibold { font-weight: 600 !important; }
-.text-muted { color: var(--text-muted) !important; }
-.text-secondary { color: var(--text-secondary) !important; }
-.text-primary { color: var(--text-primary) !important; }
+.timeline-slider {
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-elevated);
+  outline: none;
+  cursor: pointer;
+  accent-color: var(--color-cyan-400);
+}
+
+.timeline-ticks-carousel {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.25rem;
+  overflow-x: auto;
+  padding: 2px 0;
+  scrollbar-width: thin;
+  scroll-snap-type: x mandatory;
+}
+
+.timeline-tick-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.25rem 0.4rem;
+  cursor: pointer;
+  scroll-snap-align: center;
+  min-width: 38px;
+  text-align: center;
+  transition: all var(--transition-fast);
+}
+
+.timeline-tick-btn:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-elevated);
+}
+
+.timeline-tick-btn.active {
+  background-color: var(--color-cyan-400);
+  color: #020617;
+  font-weight: 800;
+  border-color: var(--color-cyan-400);
+  box-shadow: 0 0 8px rgba(34, 211, 238, 0.4);
+}
+
+@media (max-width: 480px) {
+  .timeline-tick-btn {
+    min-width: 44px;
+    padding: 0.4rem 0.2rem;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   13. Native SVG Sparklines & Touch Crosshairs
+   -------------------------------------------------------------------------- */
+.card-sparkline-box {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-lg);
+  padding: 0.5rem 0.65rem 0.4rem;
+  margin-top: 0.6rem;
+  position: relative;
+}
+
+.card-sparkline-container {
+  width: 100%;
+  height: 52px;
+  position: relative;
+}
+
+.sparkline-svg {
+  width: 100%;
+  height: 52px;
+  display: block;
+}
+
+.sparkline-node {
+  transition: r 0.2s ease, fill 0.2s ease;
+}
+
+.sparkline-node:hover {
+  r: 5px;
+}
+
+.sparkline-tooltip {
+  position: absolute;
+  background: rgba(15, 23, 42, 0.92);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-sm);
+  padding: 0.2rem 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-primary);
+  pointer-events: none;
+  z-index: 20;
+  white-space: nowrap;
+  box-shadow: var(--shadow-md);
+  transition: opacity 0.15s ease;
+}
+
+html.light .sparkline-tooltip {
+  background: rgba(255, 255, 255, 0.95);
+  color: #18181b;
+  border-color: #cbd5e1;
+}

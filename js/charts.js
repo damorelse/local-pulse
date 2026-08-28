@@ -336,62 +336,415 @@ export function renderSegmentedBar(container, options = {}) {
 }
 
 /**
- * Render lightweight inline SVG sparkline curve
- *
- * @param {HTMLElement|string} container - Container selector or DOM element
- * @param {Array<number|{year: number, value: number}>} data - Array of values or data points
- * @param {object} [options] - Options { width, height, strokeColor, fillColor, activeIndex }
+ * Helper to build smooth cubic Bézier SVG path from array of [x, y] coordinates
+ * @param {Array<[number, number]>} points
+ * @returns {string} SVG Path d string
+ */
+export function createSmoothPath(points) {
+  if (!points || points.length === 0) return '';
+  if (points.length === 1) return `M ${points[0][0]} ${points[0][1]}`;
+  if (points.length === 2) return `M ${points[0][0]} ${points[0][1]} L ${points[1][0]} ${points[1][1]}`;
+
+  let d = `M ${points[0][0]} ${points[0][1]}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i === 0 ? i : i - 1];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[i + 2 < points.length ? i + 2 : i + 1];
+
+    const cp1x = p1[0] + (p2[0] - p0[0]) / 6;
+    const cp1y = p1[1] + (p2[1] - p0[1]) / 6;
+    const cp2x = p2[0] - (p3[0] - p1[0]) / 6;
+    const cp2y = p2[1] - (p3[1] - p1[1]) / 6;
+
+    d += ` C ${cp1x.toFixed(2)} ${cp1y.toFixed(2)}, ${cp2x.toFixed(2)} ${cp2y.toFixed(2)}, ${p2[0].toFixed(2)} ${p2[1].toFixed(2)}`;
+  }
+  return d;
+}
+
+/**
+ * Renders an interactive native SVG Sparkline with cubic Bézier curve, touch crosshair, and year-jumping.
+ * 
+ * @param {HTMLElement|string} container - DOM container element or selector
+ * @param {Array<object>|object} timeSeriesData - Array of { year, value } or object { '2009': 840000, ... }
+ * @param {object} [options={}]
+ * @param {string} [options.activeYear='2022'] - Currently selected vintage
+ * @param {string} [options.color='#38bdf8'] - Stroke color
+ * @param {string} [options.unit=''] - Unit suffix (e.g. '$', '%', 'x')
+ * @param {Function} [options.onSelectYear] - Callback when a year node is clicked
+ * @param {Function} [options.formatValue] - Custom value formatter
  * @returns {SVGElement|null}
  */
-export function renderSparkline(container, data = [], options = {}) {
+export function renderSparkline(container, timeSeriesData, options = {}) {
   const containerEl = typeof container === 'string' ? document.querySelector(container) : container;
   if (!containerEl) return null;
 
-  const width = options.width || 120;
-  const height = options.height || 28;
-  const strokeColor = options.strokeColor || '#38bdf8';
-  const fillColor = options.fillColor || 'rgba(56, 189, 248, 0.15)';
+  // Normalize input data
+  let dataPoints = [];
+  if (Array.isArray(timeSeriesData)) {
+    dataPoints = timeSeriesData.map((d, idx) => {
+      if (typeof d === 'number') {
+        return { year: String(2009 + idx), value: d };
+      }
+      return {
+        year: String(d.year || d.vintage || (2009 + idx)),
+        value: d.value !== undefined ? d.value : (d.val !== undefined ? d.val : null),
+      };
+    }).filter(d => d.year && d.value !== null && !isNaN(d.value));
+  } else if (timeSeriesData && typeof timeSeriesData === 'object') {
+    const years = Object.keys(timeSeriesData).sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+    dataPoints = years.map(y => {
+      const entry = timeSeriesData[y];
+      const val = typeof entry === 'number' ? entry : (entry && entry.metrics ? (entry.metrics.homeValue || entry.metrics.medianIncome || entry.metrics.grossRent || entry.metrics.affordabilityRatio || entry.value) : (entry ? entry.value : null));
+      return { year: String(y), value: val !== null && !isNaN(val) ? Number(val) : null };
+    }).filter(d => d.value !== null);
+  }
 
-  const values = data.map(d => (typeof d === 'object' && d !== null ? d.value : d)).filter(v => v !== null && !isNaN(v) && v > 0);
-  if (values.length < 2) {
-    containerEl.innerHTML = '<span class="text-xs text-muted font-mono">⋯</span>';
+  if (dataPoints.length < 2) {
+    containerEl.innerHTML = '';
     return null;
   }
 
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max > min ? max - min : 1;
-  const paddingY = 4;
-  const usableHeight = height - paddingY * 2;
+  const {
+    activeYear = '2022',
+    color = '#38bdf8',
+    unit = '',
+    onSelectYear = null,
+    formatValue = (v) => `${unit}${typeof v === 'number' ? v.toLocaleString() : v}`,
+  } = options;
 
-  const points = values.map((val, idx) => {
-    const x = Number(((idx / (values.length - 1)) * (width - 6) + 3).toFixed(1));
-    const y = Number((height - paddingY - ((val - min) / range) * usableHeight).toFixed(1));
-    return { x, y, val };
+  const width = 240;
+  const height = 52;
+  const paddingX = 10;
+  const paddingY = 8;
+
+  const values = dataPoints.map(d => d.value);
+  let minVal = Math.min(...values);
+  let maxVal = Math.max(...values);
+  if (minVal === maxVal) {
+    minVal = minVal * 0.9;
+    maxVal = maxVal * 1.1;
+  }
+  const valRange = maxVal - minVal || 1;
+
+  const points = dataPoints.map((d, i) => {
+    const x = paddingX + (i / (dataPoints.length - 1)) * (width - 2 * paddingX);
+    const y = (height - paddingY) - ((d.value - minVal) / valRange) * (height - 2 * paddingY);
+    return { x, y, year: d.year, value: d.value };
   });
 
-  const polylinePoints = points.map(p => `${p.x},${p.y}`).join(' ');
-  const areaPath = `M ${points[0].x},${height} L ${polylinePoints.split(' ').map(p => `L ${p}`).join(' ')} L ${points[points.length - 1].x},${height} Z`.replace('M L', 'M');
-  const lastPoint = points[points.length - 1];
+  const curvePathD = createSmoothPath(points.map(p => [p.x, p.y]));
+  const firstX = points[0].x;
+  const lastX = points[points.length - 1].x;
+  const bottomY = height;
+  const areaPathD = `${curvePathD} L ${lastX} ${bottomY} L ${firstX} ${bottomY} Z`;
 
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  const gradId = `spark-grad-${Math.random().toString(36).substring(2, 8)}`;
+  const svgNs = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNs, 'svg');
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-  svg.setAttribute('width', '100%');
-  svg.setAttribute('height', String(height));
-  svg.setAttribute('class', 'sparkline-svg');
-  svg.style.overflow = 'visible';
+  svg.setAttribute('class', 'sparkline-svg w-full overflow-visible select-none cursor-crosshair');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', `15-Year Trend Sparkline (2009–2023)`);
 
-  svg.innerHTML = `
-    <defs>
-      <linearGradient id="spark-grad-${Math.floor(Math.random()*10000)}" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="${strokeColor}" stop-opacity="0.3"/>
-        <stop offset="100%" stop-color="${strokeColor}" stop-opacity="0.0"/>
-      </linearGradient>
-    </defs>
-    <path d="M ${points[0].x},${height} L ${points.map(p => `${p.x},${p.y}`).join(' L ')} L ${lastPoint.x},${height} Z" fill="${fillColor}" />
-    <polyline fill="none" stroke="${strokeColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="${polylinePoints}" />
-    <circle cx="${lastPoint.x}" cy="${lastPoint.y}" r="3" fill="${strokeColor}" />
-  `;
+  // Defs: Gradients
+  const defs = document.createElementNS(svgNs, 'defs');
+  const gradient = document.createElementNS(svgNs, 'linearGradient');
+  gradient.setAttribute('id', gradId);
+  gradient.setAttribute('x1', '0%');
+  gradient.setAttribute('y1', '0%');
+  gradient.setAttribute('x2', '0%');
+  gradient.setAttribute('y2', '100%');
+
+  const stop1 = document.createElementNS(svgNs, 'stop');
+  stop1.setAttribute('offset', '0%');
+  stop1.setAttribute('stop-color', color);
+  stop1.setAttribute('stop-opacity', '0.35');
+  gradient.appendChild(stop1);
+
+  const stop2 = document.createElementNS(svgNs, 'stop');
+  stop2.setAttribute('offset', '100%');
+  stop2.setAttribute('stop-color', color);
+  stop2.setAttribute('stop-opacity', '0.0');
+  gradient.appendChild(stop2);
+  defs.appendChild(gradient);
+  svg.appendChild(defs);
+
+  // Area Fill
+  const areaPath = document.createElementNS(svgNs, 'path');
+  areaPath.setAttribute('d', areaPathD);
+  areaPath.setAttribute('fill', `url(#${gradId})`);
+  svg.appendChild(areaPath);
+
+  // Line Stroke
+  const strokePath = document.createElementNS(svgNs, 'path');
+  strokePath.setAttribute('d', curvePathD);
+  strokePath.setAttribute('fill', 'none');
+  strokePath.setAttribute('stroke', color);
+  strokePath.setAttribute('stroke-width', '2');
+  strokePath.setAttribute('stroke-linecap', 'round');
+  strokePath.setAttribute('stroke-linejoin', 'round');
+  svg.appendChild(strokePath);
+
+  // Crosshair Elements (Group)
+  const crosshairGroup = document.createElementNS(svgNs, 'g');
+  crosshairGroup.setAttribute('class', 'sparkline-crosshair hidden');
+
+  const crosshairLine = document.createElementNS(svgNs, 'line');
+  crosshairLine.setAttribute('y1', '2');
+  crosshairLine.setAttribute('y2', String(height - 2));
+  crosshairLine.setAttribute('stroke', 'var(--color-cyan-400, #38bdf8)');
+  crosshairLine.setAttribute('stroke-width', '1');
+  crosshairLine.setAttribute('stroke-dasharray', '2 2');
+  crosshairGroup.appendChild(crosshairLine);
+
+  const crosshairCircle = document.createElementNS(svgNs, 'circle');
+  crosshairCircle.setAttribute('r', '4');
+  crosshairCircle.setAttribute('fill', color);
+  crosshairCircle.setAttribute('stroke', '#0f172a');
+  crosshairCircle.setAttribute('stroke-width', '2');
+  crosshairGroup.appendChild(crosshairCircle);
+
+  svg.appendChild(crosshairGroup);
+
+  // Year Nodes (Subtle dots for anchor years: 2009, 2015, 2020, 2023)
+  const anchorYears = ['2009', '2015', '2020', '2023'];
+  points.forEach(p => {
+    const isAnchor = anchorYears.includes(p.year);
+    const isActive = String(p.year) === String(activeYear);
+
+    if (isAnchor || isActive) {
+      const circle = document.createElementNS(svgNs, 'circle');
+      circle.setAttribute('cx', p.x.toFixed(1));
+      circle.setAttribute('cy', p.y.toFixed(1));
+      circle.setAttribute('r', isActive ? '4' : '2.5');
+      circle.setAttribute('fill', isActive ? '#ffffff' : color);
+      circle.setAttribute('stroke', isActive ? color : '#0f172a');
+      circle.setAttribute('stroke-width', isActive ? '2' : '1');
+      circle.setAttribute('class', `sparkline-node ${isActive ? 'active-node' : ''}`);
+      circle.setAttribute('data-year', p.year);
+      svg.appendChild(circle);
+    }
+  });
+
+  // Tooltip Element inside Container
+  let tooltip = containerEl.querySelector('.sparkline-tooltip');
+  if (!tooltip) {
+    tooltip = document.createElement('div');
+    tooltip.className = 'sparkline-tooltip hidden';
+    containerEl.style.position = 'relative';
+    containerEl.appendChild(tooltip);
+  }
+
+  // Pointer Interaction Overlay
+  const overlay = document.createElementNS(svgNs, 'rect');
+  overlay.setAttribute('width', String(width));
+  overlay.setAttribute('height', String(height));
+  overlay.setAttribute('fill', 'transparent');
+  overlay.style.cursor = 'crosshair';
+  svg.appendChild(overlay);
+
+  // Helper to handle crosshair position
+  function updateCrosshair(clientX) {
+    const rect = svg.getBoundingClientRect();
+    const relX = ((clientX - rect.left) / rect.width) * width;
+    
+    // Find closest point
+    let closest = points[0];
+    let minDiff = Math.abs(relX - points[0].x);
+    for (let i = 1; i < points.length; i++) {
+      const diff = Math.abs(relX - points[i].x);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closest = points[i];
+      }
+    }
+
+    crosshairGroup.classList.remove('hidden');
+    crosshairLine.setAttribute('x1', closest.x.toFixed(1));
+    crosshairLine.setAttribute('x2', closest.x.toFixed(1));
+    crosshairCircle.setAttribute('cx', closest.x.toFixed(1));
+    crosshairCircle.setAttribute('cy', closest.y.toFixed(1));
+
+    // Base point for growth calculation (2009 or first point)
+    const basePoint = points[0];
+    const deltaPct = basePoint && basePoint.value > 0 ? (((closest.value - basePoint.value) / basePoint.value) * 100).toFixed(1) : '0.0';
+    const sign = Number(deltaPct) >= 0 ? '+' : '';
+
+    tooltip.innerHTML = `<strong>${closest.year}</strong>: ${formatValue(closest.value)} <span class="text-xs ${Number(deltaPct) >= 0 ? 'delta-positive' : 'delta-warning'}">(${sign}${deltaPct}%)</span>`;
+    tooltip.classList.remove('hidden');
+
+    const tooltipLeft = Math.max(10, Math.min(rect.width - 120, (closest.x / width) * rect.width - 60));
+    tooltip.style.left = `${tooltipLeft}px`;
+    tooltip.style.top = '-28px';
+
+    return closest;
+  }
+
+  function hideCrosshair() {
+    crosshairGroup.classList.add('hidden');
+    tooltip.classList.add('hidden');
+  }
+
+  overlay.addEventListener('pointermove', (e) => {
+    updateCrosshair(e.clientX);
+  });
+
+  overlay.addEventListener('pointerleave', () => {
+    hideCrosshair();
+  });
+
+  overlay.addEventListener('click', (e) => {
+    const closest = updateCrosshair(e.clientX);
+    if (closest) {
+      if (typeof onSelectYear === 'function') {
+        onSelectYear(closest.year);
+      }
+      containerEl.dispatchEvent(new CustomEvent('vintageselect', {
+        bubbles: true,
+        detail: { year: closest.year, value: closest.value }
+      }));
+    }
+  });
+
+  // Touch Support
+  overlay.addEventListener('touchmove', (e) => {
+    if (e.touches && e.touches[0]) {
+      updateCrosshair(e.touches[0].clientX);
+    }
+  }, { passive: true });
+
+  overlay.addEventListener('touchend', () => {
+    setTimeout(hideCrosshair, 1500);
+  });
+
+  containerEl.innerHTML = '';
+  containerEl.appendChild(svg);
+  containerEl.appendChild(tooltip);
+
+  return svg;
+}
+
+/**
+ * Renders a dual 15-Year Comparison Line Chart (Place A vs Place B)
+ * 
+ * @param {HTMLElement|string} container
+ * @param {object} seriesA - { name: string, color: string, data: Array<{ year, value }> }
+ * @param {object} seriesB - { name: string, color: string, data: Array<{ year, value }> }
+ * @param {object} [options={}]
+ * @returns {SVGElement|null}
+ */
+export function render15YearComparisonChart(container, seriesA, seriesB, options = {}) {
+  const containerEl = typeof container === 'string' ? document.querySelector(container) : container;
+  if (!containerEl || !seriesA || !seriesB) return null;
+
+  const dataA = seriesA.data || [];
+  const dataB = seriesB.data || [];
+  if (dataA.length < 2 || dataB.length < 2) return null;
+
+  const width = 480;
+  const height = 180;
+  const padLeft = 45;
+  const padRight = 20;
+  const padTop = 20;
+  const padBottom = 30;
+
+  const {
+    normalized = true, // Normalize to 100 at base year (2009)
+    metricLabel = 'Indexed Growth (2009 = 100)',
+  } = options;
+
+  // Process data points
+  const baseA = dataA[0].value || 1;
+  const baseB = dataB[0].value || 1;
+
+  const normA = dataA.map(d => ({ year: d.year, val: normalized ? (d.value / baseA) * 100 : d.value }));
+  const normB = dataB.map(d => ({ year: d.year, val: normalized ? (d.value / baseB) * 100 : d.value }));
+
+  const allVals = [...normA.map(d => d.val), ...normB.map(d => d.val)].filter(v => !isNaN(v));
+  const minVal = Math.min(...allVals) * 0.95;
+  const maxVal = Math.max(...allVals) * 1.05;
+  const range = maxVal - minVal || 1;
+
+  const plotW = width - padLeft - padRight;
+  const plotH = height - padTop - padBottom;
+
+  const pointsA = normA.map((d, i) => [
+    padLeft + (i / (normA.length - 1)) * plotW,
+    (height - padBottom) - ((d.val - minVal) / range) * plotH
+  ]);
+  const pointsB = normB.map((d, i) => [
+    padLeft + (i / (normB.length - 1)) * plotW,
+    (height - padBottom) - ((d.val - minVal) / range) * plotH
+  ]);
+
+  const pathA = createSmoothPath(pointsA);
+  const pathB = createSmoothPath(pointsB);
+
+  const svgNs = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNs, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('class', 'w-full h-auto overflow-visible select-none');
+
+  // Grid Lines & Ticks
+  const gridGroup = document.createElementNS(svgNs, 'g');
+  gridGroup.setAttribute('class', 'chart-grid opacity-20');
+
+  // 3 Horizontal Grid lines
+  for (let i = 0; i <= 2; i++) {
+    const y = padTop + (i / 2) * plotH;
+    const gridVal = maxVal - (i / 2) * range;
+    const line = document.createElementNS(svgNs, 'line');
+    line.setAttribute('x1', String(padLeft));
+    line.setAttribute('x2', String(width - padRight));
+    line.setAttribute('y1', String(y));
+    line.setAttribute('y2', String(y));
+    line.setAttribute('stroke', '#94a3b8');
+    line.setAttribute('stroke-dasharray', '3 3');
+    gridGroup.appendChild(line);
+
+    const txt = document.createElementNS(svgNs, 'text');
+    txt.setAttribute('x', String(padLeft - 6));
+    txt.setAttribute('y', String(y + 4));
+    txt.setAttribute('text-anchor', 'end');
+    txt.setAttribute('class', 'font-mono text-[9px] fill-slate-400');
+    txt.textContent = normalized ? `${Math.round(gridVal)}` : `$${Math.round(gridVal / 1000)}k`;
+    svg.appendChild(txt);
+  }
+  svg.appendChild(gridGroup);
+
+  // X Axis Year Ticks
+  const milestoneYears = [0, 3, 6, 9, 12, 14]; // 2009, 2012, 2015, 2018, 2021, 2023
+  milestoneYears.forEach(idx => {
+    if (dataA[idx]) {
+      const x = padLeft + (idx / (dataA.length - 1)) * plotW;
+      const yrText = document.createElementNS(svgNs, 'text');
+      yrText.setAttribute('x', String(x));
+      yrText.setAttribute('y', String(height - 8));
+      yrText.setAttribute('text-anchor', 'middle');
+      yrText.setAttribute('class', 'font-mono text-[10px] fill-slate-400');
+      yrText.textContent = dataA[idx].year;
+      svg.appendChild(yrText);
+    }
+  });
+
+  // Curve A
+  const lineA = document.createElementNS(svgNs, 'path');
+  lineA.setAttribute('d', pathA);
+  lineA.setAttribute('fill', 'none');
+  lineA.setAttribute('stroke', seriesA.color || '#38bdf8');
+  lineA.setAttribute('stroke-width', '2.5');
+  lineA.setAttribute('stroke-linecap', 'round');
+  svg.appendChild(lineA);
+
+  // Curve B
+  const lineB = document.createElementNS(svgNs, 'path');
+  lineB.setAttribute('d', pathB);
+  lineB.setAttribute('fill', 'none');
+  lineB.setAttribute('stroke', seriesB.color || '#f59e0b');
+  lineB.setAttribute('stroke-width', '2.5');
+  lineB.setAttribute('stroke-linecap', 'round');
+  svg.appendChild(lineB);
 
   containerEl.innerHTML = '';
   containerEl.appendChild(svg);
@@ -399,124 +752,106 @@ export function renderSparkline(container, data = [], options = {}) {
 }
 
 /**
- * Render Interactive 15-Year Multi-Series SVG Trend Chart
+ * Renders a 15-Year Multi-Series Trend Chart (Values over 2009-2023)
  *
  * @param {HTMLElement|string} container
- * @param {object} data - { years: number[], series: Array<{ name: string, color: string, values: number[] }> }
- * @param {object} [options]
+ * @param {object} chartData - { years: Array<number|string>, series: Array<{ name, color, values: number[] }> }
+ * @param {object} [options={}]
+ * @returns {SVGElement|null}
  */
-export function render15YearTrendChart(container, data, options = {}) {
+export function render15YearTrendChart(container, chartData, options = {}) {
   const containerEl = typeof container === 'string' ? document.querySelector(container) : container;
-  if (!containerEl || !data || !data.years || !data.series) return null;
+  if (!containerEl || !chartData || !chartData.series) return null;
 
-  const { years, series } = data;
+  const years = chartData.years || ['2009', '2010', '2011', '2012', '2013', '2014', '2015', '2016', '2017', '2018', '2019', '2020', '2021', '2022', '2023'];
+  const seriesList = chartData.series || [];
+  if (seriesList.length === 0) return null;
+
   const width = options.width || 640;
   const height = options.height || 220;
-  const padLeft = 60;
-  const padRight = 20;
-  const padTop = 20;
-  const padBottom = 35;
+  const padLeft = options.padLeft || 50;
+  const padRight = options.padRight || 20;
+  const padTop = options.padTop || 25;
+  const padBottom = options.padBottom || 35;
 
-  const chartW = width - padLeft - padRight;
-  const chartH = height - padTop - padBottom;
+  const plotW = width - padLeft - padRight;
+  const plotH = height - padTop - padBottom;
 
-  // Find global min and max across all series
-  let allVals = [];
-  series.forEach(s => {
-    allVals = allVals.concat(s.values.filter(v => v !== null && !isNaN(v) && v > 0));
-  });
-
-  if (allVals.length === 0) {
-    containerEl.innerHTML = '<div class="p-4 text-center text-sm text-muted">No historical timeseries data available</div>';
-    return null;
+  const allVals = seriesList.flatMap(s => s.values || []).filter(v => v !== null && !isNaN(v));
+  let minVal = Math.min(...allVals);
+  let maxVal = Math.max(...allVals);
+  if (minVal === maxVal) {
+    minVal = minVal * 0.9;
+    maxVal = maxVal * 1.1;
   }
+  const range = maxVal - minVal || 1;
 
-  const minVal = Math.min(...allVals) * 0.95;
-  const maxVal = Math.max(...allVals) * 1.05;
-  const valRange = maxVal > minVal ? maxVal - minVal : 1;
-
-  const getX = (idx) => padLeft + (idx / (years.length - 1)) * chartW;
-  const getY = (val) => padTop + chartH - ((val - minVal) / valRange) * chartH;
-
-  const wrapper = document.createElement('div');
-  wrapper.className = 'trend-chart-wrapper';
-
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  const svgNs = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNs, 'svg');
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-  svg.setAttribute('class', 'w-full h-auto');
+  svg.setAttribute('class', 'w-full h-auto overflow-visible select-none');
 
-  // Y-Axis Grid Lines & Labels
-  const gridSteps = 4;
-  let gridHtml = '';
-  for (let i = 0; i <= gridSteps; i++) {
-    const v = minVal + (i / gridSteps) * valRange;
-    const y = getY(v);
-    const label = v >= 1000000 ? `$${(v / 1000000).toFixed(2)}M` : v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${Math.round(v)}`;
-    gridHtml += `
-      <line x1="${padLeft}" y1="${y}" x2="${width - padRight}" y2="${y}" stroke="var(--border-subtle, rgba(255,255,255,0.08))" stroke-dasharray="3,3" />
-      <text x="${padLeft - 8}" y="${y + 4}" fill="var(--text-muted, #94a3b8)" font-size="10" text-anchor="end" font-family="monospace">${label}</text>
-    `;
+  // Background Grid Lines
+  const gridGroup = document.createElementNS(svgNs, 'g');
+  gridGroup.setAttribute('class', 'chart-grid opacity-20');
+
+  for (let i = 0; i <= 3; i++) {
+    const y = padTop + (i / 3) * plotH;
+    const gridVal = maxVal - (i / 3) * range;
+    const line = document.createElementNS(svgNs, 'line');
+    line.setAttribute('x1', String(padLeft));
+    line.setAttribute('x2', String(width - padRight));
+    line.setAttribute('y1', String(y));
+    line.setAttribute('y2', String(y));
+    line.setAttribute('stroke', '#94a3b8');
+    line.setAttribute('stroke-dasharray', '3 3');
+    gridGroup.appendChild(line);
+
+    const txt = document.createElementNS(svgNs, 'text');
+    txt.setAttribute('x', String(padLeft - 8));
+    txt.setAttribute('y', String(y + 4));
+    txt.setAttribute('text-anchor', 'end');
+    txt.setAttribute('class', 'font-mono text-[9px] fill-slate-400');
+    txt.textContent = `$${Math.round(gridVal / 1000)}k`;
+    svg.appendChild(txt);
+  }
+  svg.appendChild(gridGroup);
+
+  // X Axis Year Ticks
+  const step = Math.max(1, Math.floor(years.length / 5));
+  for (let i = 0; i < years.length; i += step) {
+    const x = padLeft + (i / (years.length - 1)) * plotW;
+    const yrText = document.createElementNS(svgNs, 'text');
+    yrText.setAttribute('x', String(x));
+    yrText.setAttribute('y', String(height - 10));
+    yrText.setAttribute('text-anchor', 'middle');
+    yrText.setAttribute('class', 'font-mono text-[10px] fill-slate-400');
+    yrText.textContent = String(years[i]);
+    svg.appendChild(yrText);
   }
 
-  // X-Axis Year Labels
-  let xLabelsHtml = '';
-  years.forEach((yr, idx) => {
-    // Show alternate years to avoid clutter
-    if (idx % 2 === 0 || idx === years.length - 1) {
-      const x = getX(idx);
-      xLabelsHtml += `
-        <text x="${x}" y="${height - 10}" fill="var(--text-muted, #94a3b8)" font-size="10" text-anchor="middle" font-family="monospace">${yr}</text>
-      `;
-    }
+  // Draw Series Curves
+  seriesList.forEach((s) => {
+    const vals = s.values || [];
+    const points = vals.map((v, i) => [
+      padLeft + (i / (vals.length - 1)) * plotW,
+      (height - padBottom) - ((v - minVal) / range) * plotH
+    ]);
+    const pathD = createSmoothPath(points);
+
+    const pathEl = document.createElementNS(svgNs, 'path');
+    pathEl.setAttribute('d', pathD);
+    pathEl.setAttribute('fill', 'none');
+    pathEl.setAttribute('stroke', s.color || '#38bdf8');
+    pathEl.setAttribute('stroke-width', '2.5');
+    pathEl.setAttribute('stroke-linecap', 'round');
+    pathEl.setAttribute('stroke-linejoin', 'round');
+    svg.appendChild(pathEl);
   });
-
-  // Series Lines & Milestone Dots
-  let seriesHtml = '';
-  series.forEach(s => {
-    const validPoints = [];
-    s.values.forEach((v, idx) => {
-      if (v !== null && !isNaN(v)) {
-        validPoints.push({ x: getX(idx), y: getY(v), val: v, year: years[idx] });
-      }
-    });
-
-    if (validPoints.length >= 2) {
-      const ptsStr = validPoints.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
-      seriesHtml += `
-        <polyline fill="none" stroke="${s.color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points="${ptsStr}" />
-      `;
-      validPoints.forEach(p => {
-        seriesHtml += `
-          <circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.5" fill="${s.color}" stroke="var(--bg-card, #0f172a)" stroke-width="1.5">
-            <title>${s.name} (${p.year}): $${Number(p.val).toLocaleString()}</title>
-          </circle>
-        `;
-      });
-    }
-  });
-
-  svg.innerHTML = `
-    ${gridHtml}
-    ${xLabelsHtml}
-    ${seriesHtml}
-  `;
-
-  // Legend
-  const legend = document.createElement('div');
-  legend.className = 'flex items-center justify-center gap-4 text-xs mt-2';
-  series.forEach(s => {
-    const item = document.createElement('div');
-    item.className = 'flex items-center gap-1.5';
-    item.innerHTML = `<span class="inline-block w-3 h-3 rounded-full" style="background:${s.color}"></span><span class="text-secondary font-medium">${s.name}</span>`;
-    legend.appendChild(item);
-  });
-
-  wrapper.appendChild(svg);
-  wrapper.appendChild(legend);
 
   containerEl.innerHTML = '';
-  containerEl.appendChild(wrapper);
-  return wrapper;
+  containerEl.appendChild(svg);
+  return svg;
 }
 
 // Window global fallback
@@ -529,7 +864,9 @@ const CHARTS = {
   renderArcGauge,
   renderSegmentedBar,
   renderSparkline,
+  render15YearComparisonChart,
   render15YearTrendChart,
+  createSmoothPath,
   ARC_RADIUS,
   ARC_PERIMETER,
   SVG_VIEWBOX
@@ -539,5 +876,6 @@ export default CHARTS;
 
 if (typeof window !== 'undefined') {
   window.LocalPulseCharts = CHARTS;
+  window.CHARTS = CHARTS;
 }
 

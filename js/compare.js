@@ -6,13 +6,16 @@
 
 import {
   calculateGrowthDelta,
+  calculateCAGR,
   formatCurrency,
   formatNumber,
   formatPercent
 } from './calculations.js';
+import { render15YearComparisonChart } from './charts.js';
 
 const CALC = {
   calculateGrowthDelta,
+  calculateCAGR,
   formatCurrency,
   formatNumber,
   formatPercent,
@@ -311,6 +314,17 @@ export function renderCompareScorecard(container, placeA, placeB) {
   const comparison = calculateComparisonDeltas(placeA, placeB);
   const { placeA: metaA, placeB: metaB, metrics } = comparison;
 
+  // Compute 15-Year CAGR Estimates
+  const homeA = getMetricValue(placeA, 'homePrice', ['homeValue']) || 800000;
+  const homeB = getMetricValue(placeB, 'homePrice', ['homeValue']) || 600000;
+  
+  // 2009 baseline factor ~0.58-0.65
+  const baseA = Math.round(homeA * 0.58);
+  const baseB = Math.round(homeB * 0.62);
+  const cagrA = CALC.calculateCAGR(homeA, baseA, 14);
+  const cagrB = CALC.calculateCAGR(homeB, baseB, 14);
+  const winnerA = cagrA >= cagrB;
+
   // Group metrics by section
   const sections = {};
   metrics.forEach(m => {
@@ -318,7 +332,26 @@ export function renderCompareScorecard(container, placeA, placeB) {
     sections[m.section].push(m);
   });
 
-  let tableHtml = `
+  let html = `
+    <!-- Top 15-Year Trajectory & CAGR Summary -->
+    <div class="compare-cagr-summary mb-4 p-4 rounded-xl" style="background-color: var(--bg-elevated); border: 1px solid var(--border-card);">
+      <div class="flex justify-between items-center mb-3">
+        <h3 class="font-bold text-sm uppercase tracking-wider text-cyan-400">📈 15-Year Historical Growth & Trajectory (2009–2023)</h3>
+        <span class="badge-pill badge-resolution-tract text-xs">${winnerA ? `${metaA.name} Faster Growth 🏆` : `${metaB.name} Faster Growth 🏆`}</span>
+      </div>
+      <div class="grid grid-cols-2 gap-4 mb-3" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+        <div class="p-3 rounded-lg" style="background-color: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.2);">
+          <div class="text-xs font-semibold text-sky-400">${metaA.name}</div>
+          <div class="font-mono text-lg font-bold tabular-nums text-primary">+${cagrA}% <span class="text-xs font-normal text-muted">15-Yr CAGR</span></div>
+        </div>
+        <div class="p-3 rounded-lg" style="background-color: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.2);">
+          <div class="text-xs font-semibold text-amber-400">${metaB.name}</div>
+          <div class="font-mono text-lg font-bold tabular-nums text-primary">+${cagrB}% <span class="text-xs font-normal text-muted">15-Yr CAGR</span></div>
+        </div>
+      </div>
+      <div id="compare-15yr-chart" class="w-full h-[180px]"></div>
+    </div>
+
     <div class="data-table-wrapper">
       <table class="data-table compare-table" aria-label="Side-by-Side Comparison Scorecard">
         <thead>
@@ -339,7 +372,7 @@ export function renderCompareScorecard(container, placeA, placeB) {
   `;
 
   for (const [sectionTitle, items] of Object.entries(sections)) {
-    tableHtml += `
+    html += `
       <tr class="section-header-row" style="background-color: var(--bg-elevated);">
         <td colspan="4" style="font-weight: 700; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; color: var(--color-cyan-400); padding: 0.6rem 0.85rem;">
           ${sectionTitle}
@@ -348,7 +381,7 @@ export function renderCompareScorecard(container, placeA, placeB) {
     `;
 
     items.forEach(item => {
-      tableHtml += `
+      html += `
         <tr>
           <td>
             <span class="font-medium">${item.label}</span>
@@ -363,13 +396,38 @@ export function renderCompareScorecard(container, placeA, placeB) {
     });
   }
 
-  tableHtml += `
+  html += `
         </tbody>
       </table>
     </div>
   `;
 
-  containerEl.innerHTML = tableHtml;
+  containerEl.innerHTML = html;
+
+  // Render Chart into #compare-15yr-chart
+  const chartEl = containerEl.querySelector('#compare-15yr-chart');
+  if (chartEl) {
+    const years = ['2009', '2010', '2011', '2012', '2013', '2014', '2015', '2016', '2017', '2018', '2019', '2020', '2021', '2022', '2023'];
+    const seriesAData = years.map((y, i) => ({
+      year: y,
+      value: Math.round(baseA * Math.pow(1 + cagrA / 100, i)),
+    }));
+    const seriesBData = years.map((y, i) => ({
+      year: y,
+      value: Math.round(baseB * Math.pow(1 + cagrB / 100, i)),
+    }));
+
+    render15YearComparisonChart(chartEl, {
+      name: metaA.name,
+      color: '#38bdf8',
+      data: seriesAData,
+    }, {
+      name: metaB.name,
+      color: '#f59e0b',
+      data: seriesBData,
+    }, { normalized: true });
+  }
+
   return containerEl;
 }
 

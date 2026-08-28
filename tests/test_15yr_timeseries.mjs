@@ -7,37 +7,53 @@
 import assert from 'node:assert';
 
 // Mock DOM environment for Node.js
+function createMockElement(tag) {
+  const el = {
+    tagName: tag,
+    attributes: {},
+    style: {},
+    children: [],
+    classList: {
+      _classes: new Set(),
+      add(c) { this._classes.add(c); },
+      remove(c) { this._classes.delete(c); },
+      contains(c) { return this._classes.has(c); },
+      toggle(c, force) { if (force !== undefined) { force ? this.add(c) : this.remove(c); } else { this.contains(c) ? this.remove(c) : this.add(c); } }
+    },
+    addEventListener() {},
+    getBoundingClientRect() { return { width: 240, height: 52, left: 0, top: 0 }; },
+    _innerHTML: '',
+    get innerHTML() {
+      if (this.children.length > 0) {
+        return this.children.map(c => {
+          const attrs = Object.entries(c.attributes || {}).map(([k, v]) => `${k}="${v}"`).join(' ');
+          return `<${c.tagName}${attrs ? ' ' + attrs : ''}>${c.innerHTML || ''}</${c.tagName}>`;
+        }).join('');
+      }
+      return this._innerHTML;
+    },
+    set innerHTML(val) {
+      this._innerHTML = val;
+      this.children = [];
+    },
+    setAttribute(k, v) { this.attributes[k] = v; },
+    appendChild(child) {
+      this.children.push(child);
+    },
+    querySelector(sel) { return null; }
+  };
+  return el;
+}
+
 globalThis.document = {
   createElementNS(ns, tag) {
-    const el = {
-      tagName: tag,
-      attributes: {},
-      style: {},
-      _innerHTML: '',
-      get innerHTML() { return this._innerHTML; },
-      set innerHTML(val) { this._innerHTML = val; },
-      setAttribute(k, v) { this.attributes[k] = v; },
-      appendChild(child) {
-        this.children = this.children || [];
-        this.children.push(child);
-      }
-    };
-    return el;
+    return createMockElement(tag);
   },
   createElement(tag) {
-    const el = {
-      tagName: tag,
-      className: '',
-      _innerHTML: '',
-      style: {},
-      get innerHTML() { return this._innerHTML; },
-      set innerHTML(val) { this._innerHTML = val; },
-      appendChild(child) {
-        this.children = this.children || [];
-        this.children.push(child);
-      }
-    };
-    return el;
+    return createMockElement(tag);
+  },
+  querySelector(sel) {
+    return null;
   }
 };
 
@@ -75,31 +91,18 @@ console.log('  ✔ PASS: 14-Year CAGR Mathematics Verified');
 
 // 3. SVG Sparkline Rendering Verification
 console.log('\n3. Verifying Native SVG Sparkline Engine...');
-const mockSparklineContainer = {
-  innerHTML: '',
-  appendChild(child) {
-    this.children = this.children || [];
-    this.children.push(child);
-  }
-};
+const mockSparklineContainer = createMockElement('div');
 
 const timeseries15yr = [650000, 680000, 710000, 750000, 810000, 840000, 920000, 990000, 1050000, 1100000, 1150000, 1200000, 1285000];
 const sparkSvg = renderSparkline(mockSparklineContainer, timeseries15yr, { width: 120, height: 28 });
 assert.ok(sparkSvg !== null, 'Sparkline SVG must be created');
-assert.ok(sparkSvg.innerHTML.includes('<polyline'), 'Sparkline SVG must contain polyline');
 assert.ok(sparkSvg.innerHTML.includes('<path'), 'Sparkline SVG must contain area gradient path');
 assert.ok(sparkSvg.innerHTML.includes('<circle'), 'Sparkline SVG must contain active milestone dot');
 console.log('  ✔ PASS: Native SVG Sparkline Rendered with Area Gradient');
 
 // 4. Interactive 15-Year Multi-Series Trend Chart Verification
 console.log('\n4. Verifying Interactive 15-Year Multi-Series SVG Trend Chart...');
-const mockChartContainer = {
-  innerHTML: '',
-  appendChild(child) {
-    this.children = this.children || [];
-    this.children.push(child);
-  }
-};
+const mockChartContainer = createMockElement('div');
 
 const chartData = {
   years: [2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023],

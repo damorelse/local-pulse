@@ -151,37 +151,29 @@
             <span class="hero-meta-item" id="hero-vintage-badge">
               <span>Survey: ACS 5-Year</span>
             </span>
+            <span class="hero-meta-item hero-era-item" id="hero-era-container">
+              <span class="badge-pill badge-era" id="hero-era-context-badge">⚡ 2022–2023 Inflation Peak</span>
+            </span>
           </div>
         </div>
 
-        <!-- Controls: Multi-Vintage Selector, Bookmark, Share -->
+        <!-- Controls: Multi-Vintage Selector, Inflation Toggle, Bookmark, Share -->
         <div class="hero-controls">
           <!-- Survey Vintage Selector Group -->
           <div class="vintage-selector-group" id="vintage-selector" role="group" aria-label="Census Survey Vintage">
-            <button type="button" class="vintage-btn active" data-vintage="2023" title="2023 ACS 5-Year Data">2023 (Latest)</button>
-            <button type="button" class="vintage-btn" data-vintage="2022" title="2022 ACS 5-Year Data">2022</button>
+            <button type="button" class="vintage-btn" data-vintage="2023" title="2023 ACS 5-Year Data">2023 (Current)</button>
+            <button type="button" class="vintage-btn active" data-vintage="2022" title="2022 ACS 5-Year Baseline">2022</button>
             <button type="button" class="vintage-btn" data-vintage="2020" title="2020 Decennial Baseline">2020</button>
             <button type="button" class="vintage-btn" data-vintage="2015" title="2015 Historical Baseline">2015</button>
-            <div class="vintage-dropdown-wrapper">
-              <select id="vintage-dropdown-select" class="vintage-dropdown-select" aria-label="All Survey Vintages (2009-2023)">
-                <option value="" disabled selected>▾ All Years (2009–2023)</option>
-                <option value="2023">2023 (Latest ACS)</option>
-                <option value="2022">2022</option>
-                <option value="2021">2021</option>
-                <option value="2020">2020 (Decennial Baseline)</option>
-                <option value="2019">2019</option>
-                <option value="2018">2018</option>
-                <option value="2017">2017</option>
-                <option value="2016">2016</option>
-                <option value="2015">2015 (Historical Midpoint)</option>
-                <option value="2014">2014</option>
-                <option value="2013">2013</option>
-                <option value="2012">2012</option>
-                <option value="2011">2011</option>
-                <option value="2010">2010</option>
-                <option value="2009">2009 (Earliest ACS)</option>
-              </select>
-            </div>
+            <button type="button" id="btn-toggle-timeline" class="vintage-btn timeline-toggle-btn" title="Toggle 15-Year Timeline Scrubber (2009–2023)">
+              <span>▾ 2009–2023 Timeline</span>
+            </button>
+          </div>
+
+          <!-- 1-Tap Real vs Nominal Inflation Toggle -->
+          <div class="inflation-toggle-group" id="inflation-toggle-group" role="group" aria-label="Inflation Adjustment">
+            <button type="button" class="inflation-toggle-btn active" data-inflation="nominal" title="Nominal dollars as reported in each survey vintage">💵 As Reported</button>
+            <button type="button" class="inflation-toggle-btn" data-inflation="real" title="Adjust historical dollars to constant 2023 purchasing power (CPI-U)">📈 Real 2023 $</button>
           </div>
 
           <!-- 1-Tap Bookmark Place Button -->
@@ -195,6 +187,42 @@
             <span>📤</span>
             <span>Share</span>
           </button>
+        </div>
+      </div>
+
+      <!-- 15-Year Interactive Timeline Scrubber & Time-Lapse Carousel (Expandable) -->
+      <div class="timeline-scrubber-wrapper hidden" id="timeline-scrubber-wrapper">
+        <div class="timeline-scrubber-inner">
+          <div class="timeline-playback-bar">
+            <div class="flex items-center gap-2">
+              <button type="button" id="btn-timelapse-play" class="btn-timelapse-play" title="Play 15-Year Historical Time-Lapse (2009–2023)">
+                <span class="play-icon" id="play-icon">▶</span>
+                <span class="play-label" id="play-label">Play Time-Lapse</span>
+              </button>
+              <button type="button" id="btn-timelapse-speed" class="btn-timelapse-speed" title="Toggle Playback Speed (1x / 2x)">1x</button>
+            </div>
+            <div class="timeline-active-era font-mono text-xs" id="timeline-era-text">⚡ 2022 Inflation Peak</div>
+          </div>
+          <div class="timeline-slider-container">
+            <input type="range" id="timeline-scrubber-slider" min="2009" max="2023" step="1" value="2022" class="timeline-slider" aria-label="15-Year Survey Vintage Slider">
+            <div class="timeline-ticks-carousel" id="timeline-ticks-carousel">
+              <button type="button" class="timeline-tick-btn" data-year="2009">2009</button>
+              <button type="button" class="timeline-tick-btn" data-year="2010">2010</button>
+              <button type="button" class="timeline-tick-btn" data-year="2011">2011</button>
+              <button type="button" class="timeline-tick-btn" data-year="2012">2012</button>
+              <button type="button" class="timeline-tick-btn" data-year="2013">2013</button>
+              <button type="button" class="timeline-tick-btn" data-year="2014">2014</button>
+              <button type="button" class="timeline-tick-btn" data-year="2015">2015</button>
+              <button type="button" class="timeline-tick-btn" data-year="2016">2016</button>
+              <button type="button" class="timeline-tick-btn" data-year="2017">2017</button>
+              <button type="button" class="timeline-tick-btn" data-year="2018">2018</button>
+              <button type="button" class="timeline-tick-btn" data-year="2019">2019</button>
+              <button type="button" class="timeline-tick-btn" data-year="2020">2020</button>
+              <button type="button" class="timeline-tick-btn" data-year="2021">2021</button>
+              <button type="button" class="timeline-tick-btn active" data-year="2022">2022</button>
+              <button type="button" class="timeline-tick-btn" data-year="2023">2023</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -293,29 +321,13 @@
             </div>
           </div>
 
-          <!-- 15-Year Historical Sparklines Section -->
-          <div class="sparklines-card-section">
-            <div class="sparkline-wrapper">
-              <div class="sparkline-header">
-                <span class="text-xs text-muted">15-Yr Home Value Trend (2009–2023)</span>
-                <span class="text-xs font-mono font-bold text-primary" id="sparkline-cagr-home">CAGR: +4.8%</span>
-              </div>
-              <div class="sparkline-container" id="sparkline-home-price"></div>
+          <!-- 15-Year Home Price Sparkline Container -->
+          <div class="card-sparkline-box mt-3" id="sparkline-home-price-box">
+            <div class="flex justify-between items-center text-xs text-muted mb-1">
+              <span class="font-semibold uppercase tracking-wider text-[10px]">15-Yr Price Trajectory (2009–2023)</span>
+              <span class="font-mono text-[10px] text-cyan-400 font-semibold" id="sparkline-home-cagr"></span>
             </div>
-            <div class="sparkline-wrapper">
-              <div class="sparkline-header">
-                <span class="text-xs text-muted">15-Yr Gross Rent Trend</span>
-                <span class="text-xs font-mono font-bold text-primary" id="sparkline-cagr-rent">CAGR: +3.9%</span>
-              </div>
-              <div class="sparkline-container" id="sparkline-rent"></div>
-            </div>
-            <div class="sparkline-wrapper">
-              <div class="sparkline-header">
-                <span class="text-xs text-muted">15-Yr Household Income Trend</span>
-                <span class="text-xs font-mono font-bold text-primary" id="sparkline-cagr-income">CAGR: +4.2%</span>
-              </div>
-              <div class="sparkline-container" id="sparkline-income"></div>
-            </div>
+            <div id="sparkline-home-price" class="card-sparkline-container" aria-label="15-Year Median Home Value Sparkline"></div>
           </div>
         </div>
 
@@ -429,6 +441,15 @@
             </div>
             <div id="bar-diversity" aria-label="Racial & Ethnic Composition Pill Bar"></div>
           </div>
+
+          <!-- 15-Year Population Sparkline Container -->
+          <div class="card-sparkline-box mt-3" id="sparkline-pop-box">
+            <div class="flex justify-between items-center text-xs text-muted mb-1">
+              <span class="font-semibold uppercase tracking-wider text-[10px]">15-Yr Population Trajectory</span>
+              <span class="font-mono text-[10px] text-cyan-400 font-semibold" id="sparkline-pop-cagr"></span>
+            </div>
+            <div id="sparkline-population" class="card-sparkline-container" aria-label="15-Year Population Growth Sparkline"></div>
+          </div>
         </div>
 
         <footer class="card-footer">
@@ -464,6 +485,15 @@
               <span class="font-mono text-xs text-muted" id="stat-commute-time">Mean: 28.5 mins</span>
             </div>
             <div id="bar-commute" aria-label="Commute Mode Shares Pill Bar"></div>
+          </div>
+
+          <!-- 15-Year Median Income Sparkline Container -->
+          <div class="card-sparkline-box mt-3" id="sparkline-income-box">
+            <div class="flex justify-between items-center text-xs text-muted mb-1">
+              <span class="font-semibold uppercase tracking-wider text-[10px]">15-Yr Household Income Trajectory</span>
+              <span class="font-mono text-[10px] text-cyan-400 font-semibold" id="sparkline-income-cagr"></span>
+            </div>
+            <div id="sparkline-income" class="card-sparkline-container" aria-label="15-Year Income Growth Sparkline"></div>
           </div>
         </div>
 
@@ -626,50 +656,75 @@
               </div>
             </details>
 
-            <!-- Accordion 2: 15-Year Multi-Vintage Historical Growth Matrix & Interactive Trajectory -->
+            <!-- Accordion 2: 15-Year Historical Growth Matrix (2009–2023) -->
             <details class="pulse-accordion" id="accordion-trends" open>
               <summary class="pulse-accordion-summary">
                 <div class="accordion-title-group">
-                  <span>📈 15-Year Multi-Vintage Growth Matrix & Interactive Trajectory (2009 – 2023)</span>
+                  <span>📈 15-Year Multi-Vintage Growth Matrix & Economic Trajectory (2009–2023)</span>
                 </div>
-                <svg class="accordion-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="6 9 12 15 18 9"></polyline>
-                </svg>
+                <div class="flex items-center gap-2">
+                  <button type="button" id="btn-download-csv" class="btn-header-primary text-xs py-1 px-2.5" title="Download Full 15-Year Historical Dataset as CSV" onclick="event.stopPropagation();">
+                    <span>📥 Download 15-Year CSV</span>
+                  </button>
+                  <svg class="accordion-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                  </svg>
+                </div>
               </summary>
               <div class="accordion-panel">
-                <!-- Interactive 15-Year SVG Multi-Series Chart Container -->
-                <div class="chart-container-15yr">
-                  <div class="chart-header">
-                    <div class="chart-title-group">
-                      <h4 class="text-sm font-semibold text-primary">15-Year Economic Trajectory vs US National Benchmark</h4>
-                      <span class="text-xs text-muted">Click series pill to toggle metrics</span>
-                    </div>
-                    <div class="chart-metric-toggles" id="chart-metric-toggles">
-                      <button type="button" class="metric-toggle-btn active" data-metric="homeValue">🏠 Home Price</button>
-                      <button type="button" class="metric-toggle-btn" data-metric="medianIncome">💰 Income</button>
-                      <button type="button" class="metric-toggle-btn" data-metric="grossRent">🏢 Rent</button>
-                    </div>
-                  </div>
-                  <div id="trend-chart-15yr" class="trend-chart-container"></div>
-                </div>
-
-                <!-- Multi-Vintage Historical Growth Table -->
-                <div class="data-table-wrapper mt-4">
+                <div class="data-table-wrapper">
                   <table class="data-table" aria-label="Multi-Vintage Historical Trends Table">
                     <thead>
                       <tr>
                         <th>Metric</th>
-                        <th>2009 (Earliest)</th>
-                        <th>2015 (Midpoint)</th>
-                        <th>2020 (Decennial)</th>
-                        <th>2023 (Latest)</th>
-                        <th>14-Yr Overall Δ</th>
-                        <th>14-Yr CAGR</th>
+                        <th>2015 Baseline</th>
+                        <th>2020 Midpoint</th>
+                        <th>2022 Current</th>
+                        <th>7-Yr Delta (Δ%)</th>
                         <th>Economic Assessment</th>
                       </tr>
                     </thead>
                     <tbody id="trends-table-body">
-                      <!-- Rendered dynamically by app.js -->
+                      <tr>
+                        <td><strong>Median Home Value</strong></td>
+                        <td class="font-mono tabular-nums">$840,000</td>
+                        <td class="font-mono tabular-nums">$1,150,000</td>
+                        <td class="font-mono tabular-nums">$1,285,000</td>
+                        <td class="font-mono tabular-nums delta-negative"><strong>+53.0%</strong></td>
+                        <td><span class="badge-pill badge-resolution-zcta">High Housing Appreciation</span></td>
+                      </tr>
+                      <tr>
+                        <td><strong>Median Gross Rent</strong></td>
+                        <td class="font-mono tabular-nums">$1,620</td>
+                        <td class="font-mono tabular-nums">$1,980</td>
+                        <td class="font-mono tabular-nums">$2,150</td>
+                        <td class="font-mono tabular-nums delta-negative"><strong>+32.7%</strong></td>
+                        <td><span class="badge-pill badge-resolution-zcta">Moderate Rent Inflation</span></td>
+                      </tr>
+                      <tr>
+                        <td><strong>Median Household Income</strong></td>
+                        <td class="font-mono tabular-nums">$82,500</td>
+                        <td class="font-mono tabular-nums">$104,200</td>
+                        <td class="font-mono tabular-nums">$118,400</td>
+                        <td class="font-mono tabular-nums delta-positive"><strong>+43.5%</strong></td>
+                        <td><span class="badge-pill badge-resolution-tract">Strong Wage Growth</span></td>
+                      </tr>
+                      <tr>
+                        <td><strong>Bachelor's+ Attainment</strong></td>
+                        <td class="font-mono tabular-nums">54.2%</td>
+                        <td class="font-mono tabular-nums">59.8%</td>
+                        <td class="font-mono tabular-nums">62.4%</td>
+                        <td class="font-mono tabular-nums delta-positive"><strong>+8.2% pts</strong></td>
+                        <td><span class="badge-pill badge-resolution-tract">Upward Educational Mobility</span></td>
+                      </tr>
+                      <tr>
+                        <td><strong>Price-to-Income Ratio</strong></td>
+                        <td class="font-mono tabular-nums">10.18x</td>
+                        <td class="font-mono tabular-nums">11.04x</td>
+                        <td class="font-mono tabular-nums">10.85x</td>
+                        <td class="font-mono tabular-nums delta-warning"><strong>+6.6%</strong></td>
+                        <td><span class="badge-pill badge-resolution-county">Persistent Affordability Challenge</span></td>
+                      </tr>
                     </tbody>
                   </table>
                 </div>

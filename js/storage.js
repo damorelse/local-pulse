@@ -283,18 +283,26 @@ export function setCompareItems(items) {
   return arr;
 }
 
-/**
- * IndexedDB Database for Multi-Vintage Time-Series Persistence
- */
+// =========================================================================
+// IndexedDB Time-Series Persistence Engine (LocalPulseDB v2)
+// =========================================================================
+
 const DB_NAME = 'LocalPulseDB';
 const DB_VERSION = 2;
-const STORE_TIMESERIES = 'timeseries';
+const STORE_TIMESERIES = 'vintages_timeseries';
 const MAX_CACHED_SERIES = 50;
 
 let dbPromise = null;
+const memoryFallbackStore = new Map();
 
-export async function openIndexedDB() {
-  if (typeof indexedDB === 'undefined') return null;
+/**
+ * Opens or initializes the LocalPulseDB IndexedDB instance
+ * @returns {Promise<IDBDatabase|null>}
+ */
+export function getIDBDatabase() {
+  if (typeof indexedDB === 'undefined') {
+    return Promise.resolve(null);
+  }
   if (dbPromise) return dbPromise;
 
   dbPromise = new Promise((resolve) => {
@@ -303,13 +311,19 @@ export async function openIndexedDB() {
       request.onupgradeneeded = (event) => {
         const db = event.target.result;
         if (!db.objectStoreNames.contains(STORE_TIMESERIES)) {
-          const store = db.createObjectStore(STORE_TIMESERIES, { keyPath: 'id' });
+          const store = db.createObjectStore(STORE_TIMESERIES, { keyPath: 'fipsId' });
           store.createIndex('updatedAt', 'updatedAt', { unique: false });
         }
       };
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => resolve(null);
+      request.onsuccess = (event) => {
+        resolve(event.target.result);
+      };
+      request.onerror = (err) => {
+        console.warn('[LocalPulse IDB] Failed to open IndexedDB:', err);
+        resolve(null);
+      };
     } catch (e) {
+      console.warn('[LocalPulse IDB] Exception opening IndexedDB:', e);
       resolve(null);
     }
   });
@@ -317,60 +331,124 @@ export async function openIndexedDB() {
   return dbPromise;
 }
 
-export async function getTimeseries(id) {
-  if (!id) return null;
-  const db = await openIndexedDB();
-  if (!db) return null;
+/**
+ * Retrieve cached multi-vintage time series from IndexedDB
+ * @param {string} fipsId
+ * @returns {Promise<object|null>}
+ */
+export async function dbGetTimeSeries(fipsId) {
+  if (!fipsId) return null;
 
-  return new Promise((resolve) => {
-    try {
-      const tx = db.transaction(STORE_TIMESERIES, 'readonly');
-      const store = tx.objectStore(STORE_TIMESERIES);
-      const req = store.get(id);
-      req.onsuccess = () => resolve(req.result ? req.result.data : null);
-      req.onerror = () => resolve(null);
-    } catch (e) {
-      resolve(null);
-    }
-  });
-}
-
-export async function saveTimeseries(id, data) {
-  if (!id || !data) return false;
-  const db = await openIndexedDB();
-  if (!db) return false;
-
-  return new Promise((resolve) => {
-    try {
-      const tx = db.transaction(STORE_TIMESERIES, 'readwrite');
-      const store = tx.objectStore(STORE_TIMESERIES);
-      store.put({ id, data, updatedAt: Date.now() });
-      tx.oncomplete = () => {
-        pruneTimeseriesLRU(db).catch(() => {});
-        resolve(true);
-      };
-      tx.onerror = () => resolve(false);
-    } catch (e) {
-      resolve(false);
-    }
-  });
-}
-
-async function pruneTimeseriesLRU(db) {
-  if (!db) return;
   try {
+    const db = await getIDBDatabase();
+    if (!db) {
+      return memoryFallbackStore.get(fipsId) || null;
+    }
+
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORE_TIMESERIES, 'readonly');
+        const store = tx.objectStore(STORE_TIMESERIES);
+        const req = store.get(fipsId);
+        req.onsuccess = () => {
+          const record = req.result;
+          if (record && record.data) {
+            // Touch access time asynchronously
+            dbTouchLRU(fipsId).catch(() => {});
+            resolve(record.data);
+          } else {
+            resolve(null);
+          }
+        };
+        req.onerror = () => resolve(null);
+      } catch (e) {
+        resolve(memoryFallbackStore.get(fipsId) || null);
+      }
+    });
+  } catch (err) {
+    return memoryFallbackStore.get(fipsId) || null;
+  }
+}
+
+/**
+ * Store multi-vintage time series in IndexedDB with LRU touch
+ * @param {string} fipsId
+ * @param {object} data
+ * @returns {Promise<boolean>}
+ */
+export async function dbPutTimeSeries(fipsId, data) {
+  if (!fipsId || !data) return false;
+  memoryFallbackStore.set(fipsId, data);
+
+  try {
+    const db = await getIDBDatabase();
+    if (!db) return true;
+
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORE_TIMESERIES, 'readwrite');
+        const store = tx.objectStore(STORE_TIMESERIES);
+        const record = {
+          fipsId,
+          data,
+          updatedAt: Date.now(),
+        };
+        store.put(record);
+        tx.oncomplete = () => {
+          dbPruneLRU().catch(() => {});
+          resolve(true);
+        };
+        tx.onerror = () => resolve(false);
+      } catch (e) {
+        resolve(true);
+      }
+    });
+  } catch (err) {
+    return true;
+  }
+}
+
+/**
+ * Touch LRU timestamp
+ */
+async function dbTouchLRU(fipsId) {
+  try {
+    const db = await getIDBDatabase();
+    if (!db) return;
+    const tx = db.transaction(STORE_TIMESERIES, 'readwrite');
+    const store = tx.objectStore(STORE_TIMESERIES);
+    const req = store.get(fipsId);
+    req.onsuccess = () => {
+      if (req.result) {
+        req.result.updatedAt = Date.now();
+        store.put(req.result);
+      }
+    };
+  } catch (e) {}
+}
+
+/**
+ * Prune old records if exceeding MAX_CACHED_SERIES
+ */
+export async function dbPruneLRU() {
+  try {
+    const db = await getIDBDatabase();
+    if (!db) return;
+
     const tx = db.transaction(STORE_TIMESERIES, 'readwrite');
     const store = tx.objectStore(STORE_TIMESERIES);
     const countReq = store.count();
+
     countReq.onsuccess = () => {
-      if (countReq.result > MAX_CACHED_SERIES) {
-        const excess = countReq.result - MAX_CACHED_SERIES;
+      const count = countReq.result;
+      if (count > MAX_CACHED_SERIES) {
         const index = store.index('updatedAt');
+        const toDelete = count - MAX_CACHED_SERIES;
         let deleted = 0;
-        index.openCursor().onsuccess = (e) => {
-          const cursor = e.target.result;
-          if (cursor && deleted < excess) {
-            store.delete(cursor.primaryKey);
+        index.openCursor().onsuccess = (event) => {
+          const cursor = event.target.result;
+          if (cursor && deleted < toDelete) {
+            cursor.delete();
             deleted++;
             cursor.continue();
           }
@@ -395,9 +473,9 @@ const STORAGE = {
   safeJsonParse,
   getStorageItem,
   setStorageItem,
-  openIndexedDB,
-  getTimeseries,
-  saveTimeseries,
+  dbGetTimeSeries,
+  dbPutTimeSeries,
+  dbPruneLRU,
   STORAGE_KEYS,
   MAX_RECENT_SEARCHES,
 };

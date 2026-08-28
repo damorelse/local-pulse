@@ -11,14 +11,20 @@ import {
   calculateRentBurden,
   calculateDiversityIndex
 } from './calculations.js';
+import {
+  dbGetTimeSeries,
+  dbPutTimeSeries
+} from './storage.js';
 
 const CONFIG = importedConfig || (typeof window !== 'undefined' && (window.LocalPulseConfig || window.CONFIG)) || {
   API: { CENSUS_ACS_BASE: 'https://api.census.gov/data' },
+  VINTAGES: ['2023', '2022', '2021', '2020', '2019', '2018', '2017', '2016', '2015', '2014', '2013', '2012', '2011', '2010', '2009'],
+  ANCHOR_VINTAGES: ['2023', '2022', '2020', '2015'],
   DEFAULT_VINTAGE: '2022',
   SENTINEL_VALUES: [-666666666, -888888888, -999999999, -222222222, -333333333, -555555555],
   RESOLUTIONS: {
     TRACT: { key: 'tract', name: 'Census Tract', badge: '📍 Census Tract (Hyperlocal)' },
-    ZCTA: { key: 'zcta', name: 'ZIP Code Tabulation Area', badge: '📮 ZIP Code (ZCTA)' },
+    ZCTA: { key: 'zcta', name: 'ZIP Code Tabulation Area', badge: '🏷️ ZIP (Boundary Adjusted)' },
     COUNTY: { key: 'county', name: 'County Level', badge: '🏛️ County Level' },
     BENCHMARK: { key: 'benchmark', name: 'State/National Benchmark', badge: '⚡ Benchmark Estimate' },
   },
@@ -462,132 +468,105 @@ export async function fetchCensusProfile(stateFips, countyFips, tractFips, zcta 
 }
 
 /**
- * Concurrently fetch multiple survey vintages with throttled batching
+ * Retrieves a multi-vintage time series profile across 2009–2023 for a geography.
+ * Implements Tiered Lazy Hydration:
+ * 1. Checks IndexedDB (LocalPulseDB) first for instant cache hit.
+ * 2. Eagerly fetches anchor vintages (2023, 2022, 2020, 2015) in parallel for fast initial paint (<150ms).
+ * 3. Exposes fetchHistorical(onProgress) to lazy load remaining historical vintages in throttled batches.
  *
  * @param {string} stateFips
  * @param {string} countyFips
  * @param {string} tractFips
- * @param {string} zcta
- * @param {Array<string>} vintages
- * @param {object} [options]
- * @returns {Promise<Record<string, object>>}
+ * @param {string} [zcta='']
+ * @param {object} [options={}]
+ * @returns {Promise<{ fipsKey: string, vintages: object, anchorVintages: string[], allVintages: string[], isComplete: boolean, fetchHistorical: Function, getVintage: Function }>}
  */
-export async function fetchVintageBatch(stateFips, countyFips, tractFips, zcta = '', vintages = ['2022'], options = {}) {
-  const results = {};
-  const queue = [...vintages];
-  const CONCURRENCY = 4;
+export async function getMultiVintageProfile(stateFips, countyFips, tractFips, zcta = '', options = {}) {
+  const fipsKey = `fips-${stateFips || '00'}${countyFips || '000'}${tractFips || '000000'}${zcta ? `_${zcta}` : ''}`;
+  const allVintagesList = CONFIG.VINTAGES || ['2023', '2022', '2021', '2020', '2019', '2018', '2017', '2016', '2015', '2014', '2013', '2012', '2011', '2010', '2009'];
+  const anchorVintagesList = CONFIG.ANCHOR_VINTAGES || ['2023', '2022', '2020', '2015'];
+  const remainingVintagesList = allVintagesList.filter(v => !anchorVintagesList.includes(v));
 
-  const workers = Array.from({ length: Math.min(queue.length, CONCURRENCY) }, async () => {
-    while (queue.length > 0) {
-      if (options.signal && options.signal.aborted) break;
-      const v = queue.shift();
-      try {
-        const profile = await fetchCensusProfile(stateFips, countyFips, tractFips, zcta, v, options);
-        results[v] = profile;
-      } catch (err) {
-        if (err.name === 'AbortError') throw err;
-        results[v] = null;
-      }
-    }
-  });
-
-  await Promise.all(workers);
-  return results;
-}
-
-/**
- * Multi-vintage timeseries pipeline with IndexedDB persistence and tiered lazy loading
- *
- * @param {string} stateFips
- * @param {string} countyFips
- * @param {string} tractFips
- * @param {string} zcta
- * @param {object} [options]
- * @returns {Promise<{ key: string, vintages: object, timeseries: object, isComplete: boolean, fetchHistorical: Function }>}
- */
-export async function fetchMultiVintageTimeseries(stateFips, countyFips, tractFips, zcta = '', options = {}) {
-  const cacheKey = `fips-${stateFips || '00'}-${countyFips || '000'}-${tractFips || '000000'}`;
-  
-  // 1. Check IndexedDB cached timeseries
-  if (typeof window !== 'undefined' && window.LocalPulseStorage && typeof window.LocalPulseStorage.getTimeseries === 'function') {
-    const cached = await window.LocalPulseStorage.getTimeseries(cacheKey).catch(() => null);
-    if (cached && cached.vintages && Object.keys(cached.vintages).length >= 10) {
-      return {
-        key: cacheKey,
-        vintages: cached.vintages,
-        timeseries: cached.timeseries,
-        isComplete: true,
-        fetchHistorical: async () => cached,
-      };
-    }
+  // 1. Check IndexedDB Cache
+  let cachedSeries = null;
+  try {
+    cachedSeries = await dbGetTimeSeries(fipsKey);
+  } catch (e) {
+    cachedSeries = null;
   }
 
-  // 2. Phase 1: Fetch Anchor Vintages (2023, 2022, 2020, 2015) for instant paint
-  const anchors = CONFIG.ANCHOR_VINTAGES || ['2023', '2022', '2020', '2015'];
-  const anchorProfiles = await fetchVintageBatch(stateFips, countyFips, tractFips, zcta, anchors, options);
+  const timeSeries = cachedSeries && typeof cachedSeries === 'object' ? { ...cachedSeries } : {};
+  const hasAllAnchors = anchorVintagesList.every(v => timeSeries[v] && timeSeries[v].metrics);
+  const isFullyComplete = allVintagesList.every(v => timeSeries[v] && timeSeries[v].metrics);
 
-  const buildTimeSeries = (allVintages) => {
-    const allYears = (CONFIG.VINTAGES || ['2023', '2022', '2021', '2020', '2019', '2018', '2017', '2016', '2015', '2014', '2013', '2012', '2011', '2010', '2009'])
-      .map(Number)
-      .sort((a, b) => a - b);
-
-    const ts = {
-      years: allYears,
-      homeValue: [],
-      medianIncome: [],
-      grossRent: [],
-      affordabilityRatio: [],
-      rentBurden: [],
-    };
-
-    for (const yr of allYears) {
-      const p = allVintages[String(yr)];
-      const m = (p && p.metrics) || {};
-      ts.homeValue.push(m.homeValue ?? null);
-      ts.medianIncome.push(m.medianIncome ?? null);
-      ts.grossRent.push(m.grossRent ?? null);
-      ts.affordabilityRatio.push(m.affordabilityRatio ?? null);
-      ts.rentBurden.push(m.rentBurden ?? null);
-    }
-    return ts;
-  };
-
-  const initialTimeseries = buildTimeSeries(anchorProfiles);
-
-  const container = {
-    key: cacheKey,
-    vintages: anchorProfiles,
-    timeseries: initialTimeseries,
-    isComplete: false,
-    fetchHistorical: async () => {
-      if (container.isComplete) return container;
-      const allYears = CONFIG.VINTAGES || ['2023', '2022', '2021', '2020', '2019', '2018', '2017', '2016', '2015', '2014', '2013', '2012', '2011', '2010', '2009'];
-      const remainingYears = allYears.filter(y => !anchorProfiles[y]);
-      const historicalProfiles = await fetchVintageBatch(stateFips, countyFips, tractFips, zcta, remainingYears, options);
-
-      Object.assign(container.vintages, historicalProfiles);
-      container.timeseries = buildTimeSeries(container.vintages);
-      container.isComplete = true;
-
-      // Persist to IndexedDB
-      if (typeof window !== 'undefined' && window.LocalPulseStorage && typeof window.LocalPulseStorage.saveTimeseries === 'function') {
-        await window.LocalPulseStorage.saveTimeseries(cacheKey, {
-          vintages: container.vintages,
-          timeseries: container.timeseries,
-        }).catch(() => {});
+  // 2. If anchors missing, fetch eagerly in parallel
+  if (!hasAllAnchors) {
+    const fetchPromises = anchorVintagesList.map(async (vintage) => {
+      if (timeSeries[vintage]) return { vintage, data: timeSeries[vintage] };
+      try {
+        const data = await fetchCensusProfile(stateFips, countyFips, tractFips, zcta, vintage, options);
+        return { vintage, data };
+      } catch (err) {
+        return { vintage, data: null };
       }
+    });
 
-      return container;
+    const results = await Promise.all(fetchPromises);
+    results.forEach(({ vintage, data }) => {
+      if (data) timeSeries[vintage] = data;
+    });
+
+    // Save partial or complete to IDB
+    dbPutTimeSeries(fipsKey, timeSeries).catch(() => {});
+  }
+
+  // 3. Define lazy loader for remaining historical years
+  let isFetchingHistorical = false;
+  const fetchHistorical = async (onProgress = null) => {
+    if (isFetchingHistorical) return timeSeries;
+    isFetchingHistorical = true;
+
+    // Batch size of 4 for polite API throughput
+    const batchSize = 4;
+    const pending = remainingVintagesList.filter(v => !timeSeries[v] || !timeSeries[v].metrics);
+
+    for (let i = 0; i < pending.length; i += batchSize) {
+      const chunk = pending.slice(i, i + batchSize);
+      await Promise.all(chunk.map(async (v) => {
+        try {
+          const profile = await fetchCensusProfile(stateFips, countyFips, tractFips, zcta, v, options);
+          if (profile) {
+            timeSeries[v] = profile;
+            if (typeof onProgress === 'function') {
+              onProgress(v, profile, timeSeries);
+            }
+          }
+        } catch (e) {
+          console.warn(`[LocalPulse Census] Failed to lazy-load vintage ${v}:`, e);
+        }
+      }));
     }
+
+    // Persist complete time series to IndexedDB
+    dbPutTimeSeries(fipsKey, timeSeries).catch(() => {});
+    isFetchingHistorical = false;
+    return timeSeries;
   };
 
-  return container;
+  return {
+    fipsKey,
+    vintages: timeSeries,
+    anchorVintages: anchorVintagesList,
+    allVintages: allVintagesList,
+    isComplete: isFullyComplete || allVintagesList.every(v => timeSeries[v] && timeSeries[v].metrics),
+    fetchHistorical,
+    getVintage: (v) => timeSeries[v] || timeSeries[CONFIG.DEFAULT_VINTAGE] || null,
+  };
 }
 
 const CENSUS = {
   fetchCensusProfile,
-  fetchVintageBatch,
-  fetchMultiVintageTimeseries,
+  getMultiVintageProfile,
   sanitizeCensusValue,
   parseCensusRows,
   buildCensusMetrics,
