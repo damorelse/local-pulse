@@ -85,8 +85,14 @@ export async function loadBenchmarks(options = {}) {
   const fetchFn = options.fetch || (typeof globalThis !== 'undefined' ? globalThis.fetch : null);
   if (fetchFn) {
     try {
-      const res = await fetchFn('/data/benchmarks.json');
-      if (res.ok) {
+      let res = await fetchFn('data/benchmarks.json').catch(() => null);
+      if (!res || !res.ok) {
+        res = await fetchFn('./data/benchmarks.json').catch(() => null);
+      }
+      if (!res || !res.ok) {
+        res = await fetchFn('/data/benchmarks.json').catch(() => null);
+      }
+      if (res && res.ok) {
         cachedBenchmarks = await res.json();
         return cachedBenchmarks;
       }

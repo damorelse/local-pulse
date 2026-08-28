@@ -1418,7 +1418,8 @@ import { shareNeighborhood, showToastNotification } from './share.js';
   function registerServiceWorker() {
     if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js')
+        const swPath = './sw.js';
+        navigator.serviceWorker.register(swPath)
           .then(reg => {
             console.log('[LocalPulse PWA] Service Worker registered with scope:', reg.scope);
           })
