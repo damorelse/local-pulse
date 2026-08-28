@@ -283,6 +283,103 @@ export function setCompareItems(items) {
   return arr;
 }
 
+/**
+ * IndexedDB Database for Multi-Vintage Time-Series Persistence
+ */
+const DB_NAME = 'LocalPulseDB';
+const DB_VERSION = 2;
+const STORE_TIMESERIES = 'timeseries';
+const MAX_CACHED_SERIES = 50;
+
+let dbPromise = null;
+
+export async function openIndexedDB() {
+  if (typeof indexedDB === 'undefined') return null;
+  if (dbPromise) return dbPromise;
+
+  dbPromise = new Promise((resolve) => {
+    try {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains(STORE_TIMESERIES)) {
+          const store = db.createObjectStore(STORE_TIMESERIES, { keyPath: 'id' });
+          store.createIndex('updatedAt', 'updatedAt', { unique: false });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => resolve(null);
+    } catch (e) {
+      resolve(null);
+    }
+  });
+
+  return dbPromise;
+}
+
+export async function getTimeseries(id) {
+  if (!id) return null;
+  const db = await openIndexedDB();
+  if (!db) return null;
+
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(STORE_TIMESERIES, 'readonly');
+      const store = tx.objectStore(STORE_TIMESERIES);
+      const req = store.get(id);
+      req.onsuccess = () => resolve(req.result ? req.result.data : null);
+      req.onerror = () => resolve(null);
+    } catch (e) {
+      resolve(null);
+    }
+  });
+}
+
+export async function saveTimeseries(id, data) {
+  if (!id || !data) return false;
+  const db = await openIndexedDB();
+  if (!db) return false;
+
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(STORE_TIMESERIES, 'readwrite');
+      const store = tx.objectStore(STORE_TIMESERIES);
+      store.put({ id, data, updatedAt: Date.now() });
+      tx.oncomplete = () => {
+        pruneTimeseriesLRU(db).catch(() => {});
+        resolve(true);
+      };
+      tx.onerror = () => resolve(false);
+    } catch (e) {
+      resolve(false);
+    }
+  });
+}
+
+async function pruneTimeseriesLRU(db) {
+  if (!db) return;
+  try {
+    const tx = db.transaction(STORE_TIMESERIES, 'readwrite');
+    const store = tx.objectStore(STORE_TIMESERIES);
+    const countReq = store.count();
+    countReq.onsuccess = () => {
+      if (countReq.result > MAX_CACHED_SERIES) {
+        const excess = countReq.result - MAX_CACHED_SERIES;
+        const index = store.index('updatedAt');
+        let deleted = 0;
+        index.openCursor().onsuccess = (e) => {
+          const cursor = e.target.result;
+          if (cursor && deleted < excess) {
+            store.delete(cursor.primaryKey);
+            deleted++;
+            cursor.continue();
+          }
+        };
+      }
+    };
+  } catch (e) {}
+}
+
 const STORAGE = {
   getSavedPlaces,
   savePlace,
@@ -298,6 +395,9 @@ const STORAGE = {
   safeJsonParse,
   getStorageItem,
   setStorageItem,
+  openIndexedDB,
+  getTimeseries,
+  saveTimeseries,
   STORAGE_KEYS,
   MAX_RECENT_SEARCHES,
 };

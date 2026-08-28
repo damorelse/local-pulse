@@ -158,9 +158,30 @@
         <div class="hero-controls">
           <!-- Survey Vintage Selector Group -->
           <div class="vintage-selector-group" id="vintage-selector" role="group" aria-label="Census Survey Vintage">
-            <button type="button" class="vintage-btn active" data-vintage="2022" title="2022 ACS 5-Year Data">2022 (Current)</button>
+            <button type="button" class="vintage-btn active" data-vintage="2023" title="2023 ACS 5-Year Data">2023 (Latest)</button>
+            <button type="button" class="vintage-btn" data-vintage="2022" title="2022 ACS 5-Year Data">2022</button>
             <button type="button" class="vintage-btn" data-vintage="2020" title="2020 Decennial Baseline">2020</button>
             <button type="button" class="vintage-btn" data-vintage="2015" title="2015 Historical Baseline">2015</button>
+            <div class="vintage-dropdown-wrapper">
+              <select id="vintage-dropdown-select" class="vintage-dropdown-select" aria-label="All Survey Vintages (2009-2023)">
+                <option value="" disabled selected>▾ All Years (2009–2023)</option>
+                <option value="2023">2023 (Latest ACS)</option>
+                <option value="2022">2022</option>
+                <option value="2021">2021</option>
+                <option value="2020">2020 (Decennial Baseline)</option>
+                <option value="2019">2019</option>
+                <option value="2018">2018</option>
+                <option value="2017">2017</option>
+                <option value="2016">2016</option>
+                <option value="2015">2015 (Historical Midpoint)</option>
+                <option value="2014">2014</option>
+                <option value="2013">2013</option>
+                <option value="2012">2012</option>
+                <option value="2011">2011</option>
+                <option value="2010">2010</option>
+                <option value="2009">2009 (Earliest ACS)</option>
+              </select>
+            </div>
           </div>
 
           <!-- 1-Tap Bookmark Place Button -->
@@ -269,6 +290,31 @@
               <span class="stat-label">Gross Rent Burden</span>
               <span class="stat-value font-mono tabular-nums" id="stat-rent-burden">21.8%</span>
               <span class="stat-sub delta-positive" id="stat-burden-sub">Affordable (&lt;30%)</span>
+            </div>
+          </div>
+
+          <!-- 15-Year Historical Sparklines Section -->
+          <div class="sparklines-card-section">
+            <div class="sparkline-wrapper">
+              <div class="sparkline-header">
+                <span class="text-xs text-muted">15-Yr Home Value Trend (2009–2023)</span>
+                <span class="text-xs font-mono font-bold text-primary" id="sparkline-cagr-home">CAGR: +4.8%</span>
+              </div>
+              <div class="sparkline-container" id="sparkline-home-price"></div>
+            </div>
+            <div class="sparkline-wrapper">
+              <div class="sparkline-header">
+                <span class="text-xs text-muted">15-Yr Gross Rent Trend</span>
+                <span class="text-xs font-mono font-bold text-primary" id="sparkline-cagr-rent">CAGR: +3.9%</span>
+              </div>
+              <div class="sparkline-container" id="sparkline-rent"></div>
+            </div>
+            <div class="sparkline-wrapper">
+              <div class="sparkline-header">
+                <span class="text-xs text-muted">15-Yr Household Income Trend</span>
+                <span class="text-xs font-mono font-bold text-primary" id="sparkline-cagr-income">CAGR: +4.2%</span>
+              </div>
+              <div class="sparkline-container" id="sparkline-income"></div>
             </div>
           </div>
         </div>
@@ -580,70 +626,50 @@
               </div>
             </details>
 
-            <!-- Accordion 2: 2015 - 2022 Multi-Vintage Historical Growth Matrix -->
+            <!-- Accordion 2: 15-Year Multi-Vintage Historical Growth Matrix & Interactive Trajectory -->
             <details class="pulse-accordion" id="accordion-trends" open>
               <summary class="pulse-accordion-summary">
                 <div class="accordion-title-group">
-                  <span>📈 2015 – 2022 Multi-Vintage Growth Matrix & Economic Trajectory</span>
+                  <span>📈 15-Year Multi-Vintage Growth Matrix & Interactive Trajectory (2009 – 2023)</span>
                 </div>
                 <svg class="accordion-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="6 9 12 15 18 9"></polyline>
                 </svg>
               </summary>
               <div class="accordion-panel">
-                <div class="data-table-wrapper">
+                <!-- Interactive 15-Year SVG Multi-Series Chart Container -->
+                <div class="chart-container-15yr">
+                  <div class="chart-header">
+                    <div class="chart-title-group">
+                      <h4 class="text-sm font-semibold text-primary">15-Year Economic Trajectory vs US National Benchmark</h4>
+                      <span class="text-xs text-muted">Click series pill to toggle metrics</span>
+                    </div>
+                    <div class="chart-metric-toggles" id="chart-metric-toggles">
+                      <button type="button" class="metric-toggle-btn active" data-metric="homeValue">🏠 Home Price</button>
+                      <button type="button" class="metric-toggle-btn" data-metric="medianIncome">💰 Income</button>
+                      <button type="button" class="metric-toggle-btn" data-metric="grossRent">🏢 Rent</button>
+                    </div>
+                  </div>
+                  <div id="trend-chart-15yr" class="trend-chart-container"></div>
+                </div>
+
+                <!-- Multi-Vintage Historical Growth Table -->
+                <div class="data-table-wrapper mt-4">
                   <table class="data-table" aria-label="Multi-Vintage Historical Trends Table">
                     <thead>
                       <tr>
                         <th>Metric</th>
-                        <th>2015 Baseline</th>
-                        <th>2020 Midpoint</th>
-                        <th>2022 Current</th>
-                        <th>7-Yr Delta (Δ%)</th>
+                        <th>2009 (Earliest)</th>
+                        <th>2015 (Midpoint)</th>
+                        <th>2020 (Decennial)</th>
+                        <th>2023 (Latest)</th>
+                        <th>14-Yr Overall Δ</th>
+                        <th>14-Yr CAGR</th>
                         <th>Economic Assessment</th>
                       </tr>
                     </thead>
                     <tbody id="trends-table-body">
-                      <tr>
-                        <td><strong>Median Home Value</strong></td>
-                        <td class="font-mono tabular-nums">$840,000</td>
-                        <td class="font-mono tabular-nums">$1,150,000</td>
-                        <td class="font-mono tabular-nums">$1,285,000</td>
-                        <td class="font-mono tabular-nums delta-negative"><strong>+53.0%</strong></td>
-                        <td><span class="badge-pill badge-resolution-zcta">High Housing Appreciation</span></td>
-                      </tr>
-                      <tr>
-                        <td><strong>Median Gross Rent</strong></td>
-                        <td class="font-mono tabular-nums">$1,620</td>
-                        <td class="font-mono tabular-nums">$1,980</td>
-                        <td class="font-mono tabular-nums">$2,150</td>
-                        <td class="font-mono tabular-nums delta-negative"><strong>+32.7%</strong></td>
-                        <td><span class="badge-pill badge-resolution-zcta">Moderate Rent Inflation</span></td>
-                      </tr>
-                      <tr>
-                        <td><strong>Median Household Income</strong></td>
-                        <td class="font-mono tabular-nums">$82,500</td>
-                        <td class="font-mono tabular-nums">$104,200</td>
-                        <td class="font-mono tabular-nums">$118,400</td>
-                        <td class="font-mono tabular-nums delta-positive"><strong>+43.5%</strong></td>
-                        <td><span class="badge-pill badge-resolution-tract">Strong Wage Growth</span></td>
-                      </tr>
-                      <tr>
-                        <td><strong>Bachelor's+ Attainment</strong></td>
-                        <td class="font-mono tabular-nums">54.2%</td>
-                        <td class="font-mono tabular-nums">59.8%</td>
-                        <td class="font-mono tabular-nums">62.4%</td>
-                        <td class="font-mono tabular-nums delta-positive"><strong>+8.2% pts</strong></td>
-                        <td><span class="badge-pill badge-resolution-tract">Upward Educational Mobility</span></td>
-                      </tr>
-                      <tr>
-                        <td><strong>Price-to-Income Ratio</strong></td>
-                        <td class="font-mono tabular-nums">10.18x</td>
-                        <td class="font-mono tabular-nums">11.04x</td>
-                        <td class="font-mono tabular-nums">10.85x</td>
-                        <td class="font-mono tabular-nums delta-warning"><strong>+6.6%</strong></td>
-                        <td><span class="badge-pill badge-resolution-county">Persistent Affordability Challenge</span></td>
-                      </tr>
+                      <!-- Rendered dynamically by app.js -->
                     </tbody>
                   </table>
                 </div>

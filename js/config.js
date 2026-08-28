@@ -21,8 +21,9 @@ export const CONFIG = {
   // User Agent for OSM Nominatim and Census Requests
   USER_AGENT: 'LocalPulsePWA/1.0 (https://localpulse.app; mailto:support@localpulse.app)',
 
-  // Supported Survey Vintages
-  VINTAGES: ['2022', '2020', '2015'],
+  // Supported Survey Vintages (Full 15-Year Series)
+  VINTAGES: ['2023', '2022', '2021', '2020', '2019', '2018', '2017', '2016', '2015', '2014', '2013', '2012', '2011', '2010', '2009'],
+  ANCHOR_VINTAGES: ['2023', '2022', '2020', '2015'],
   DEFAULT_VINTAGE: '2022',
 
   // Popular US Neighborhood Presets

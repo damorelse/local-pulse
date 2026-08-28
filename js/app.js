@@ -8,10 +8,10 @@
 // Import internal modules
 import { CONFIG } from './config.js';
 import { initTheme, toggleTheme, getCurrentTheme } from './theme.js';
-import { renderArcGauge, renderSegmentedBar } from './charts.js';
+import { renderArcGauge, renderSegmentedBar, renderSparkline, render15YearTrendChart } from './charts.js';
 import { initMap } from './map.js';
 import { resolveCoordinates, searchAddress, reverseGeocode } from './geocoding.js';
-import { fetchCensusProfile, loadBenchmarks } from './census.js';
+import { fetchCensusProfile, fetchMultiVintageTimeseries, loadBenchmarks } from './census.js';
 import { fetchEnvironmentalData } from './environment.js';
 import { fetchNearbyLandmarks } from './wikipedia.js';
 import {
@@ -46,10 +46,12 @@ import { shareNeighborhood, showToastNotification } from './share.js';
   // Application State
   const AppState = {
     coords: { lat: 37.7599, lng: -122.4148 }, // Default: SF Mission
-    vintage: '2022',
+    vintage: '2023',
     placeMeta: null,
     censusData: null,
-    allVintagesData: {}, // Cache for 2022, 2020, 2015
+    multiVintageContainer: null,
+    allVintagesData: {}, // Cache for all fetched vintages (2009-2023)
+    activeChartMetric: 'homeValue', // 'homeValue' | 'medianIncome' | 'grossRent'
     environmentalData: null,
     landmarksData: [],
     isLoading: false,
@@ -244,29 +246,24 @@ import { shareNeighborhood, showToastNotification } from './share.js';
         }
       };
 
-      // 2. Parallel fan-out: Fetch Census Profile (2022 + 2020 + 2015), Environmental Data, and Wikipedia Landmarks
-      const [census2022Res, census2020Res, census2015Res, envRes, wikiRes] = await Promise.allSettled([
-        fetchCensusProfile(stateFips, countyFips, tractFips, zcta, '2022', { signal }),
-        fetchCensusProfile(stateFips, countyFips, tractFips, zcta, '2020', { signal }),
-        fetchCensusProfile(stateFips, countyFips, tractFips, zcta, '2015', { signal }),
+      // 2. Parallel fan-out: Fetch Multi-Vintage Timeseries (2009-2023), Environmental Data, and Wikipedia Landmarks
+      const [multiRes, envRes, wikiRes] = await Promise.allSettled([
+        fetchMultiVintageTimeseries(stateFips, countyFips, tractFips, zcta, { signal }),
         fetchEnvironmentalData(lat, lng, { signal }),
         fetchNearbyLandmarks(lat, lng, 3500, 6, { signal })
       ]);
 
       if (signal.aborted) return;
 
-      // Store multi-vintage census profiles
-      AppState.allVintagesData = {
-        '2022': census2022Res.status === 'fulfilled' ? census2022Res.value : null,
-        '2020': census2020Res.status === 'fulfilled' ? census2020Res.value : null,
-        '2015': census2015Res.status === 'fulfilled' ? census2015Res.value : null,
-      };
+      const multiContainer = multiRes.status === 'fulfilled' ? multiRes.value : null;
+      AppState.multiVintageContainer = multiContainer;
+      AppState.allVintagesData = (multiContainer && multiContainer.vintages) || {};
 
-      AppState.censusData = AppState.allVintagesData[AppState.vintage] || AppState.allVintagesData['2022'];
+      AppState.censusData = AppState.allVintagesData[AppState.vintage] || AppState.allVintagesData['2023'] || AppState.allVintagesData['2022'] || Object.values(AppState.allVintagesData)[0];
       AppState.environmentalData = envRes.status === 'fulfilled' ? envRes.value : null;
       AppState.landmarksData = wikiRes.status === 'fulfilled' ? wikiRes.value : [];
 
-      // 3. Render all UI dashboard components
+      // 3. Render all UI dashboard components (Instant paint with anchor vintages)
       renderDashboard();
 
       // 4. Record to recent searches
@@ -280,6 +277,20 @@ import { shareNeighborhood, showToastNotification } from './share.js';
 
       // 5. Update bookmark state
       updateBookmarkButtonState();
+
+      // 6. Background Phase 2: Complete 15-Year historical hydration
+      if (multiContainer && !multiContainer.isComplete && typeof multiContainer.fetchHistorical === 'function') {
+        multiContainer.fetchHistorical().then(updated => {
+          if (AppState.coords.lat === lat && AppState.coords.lng === lng) {
+            AppState.allVintagesData = updated.vintages;
+            renderSparklines();
+            render15YearTrend();
+            renderHistoricalTrendsTable();
+          }
+        }).catch(err => {
+          console.warn('[LocalPulse] Background timeseries hydration notice:', err);
+        });
+      }
 
     } catch (err) {
       if (!signal.aborted) {
@@ -354,7 +365,12 @@ import { shareNeighborhood, showToastNotification } from './share.js';
     // 9. Card 7: Accordions (Demographic breakdown & Multi-vintage historical matrix)
     renderAccordions(metrics, stateBm, usBm);
 
-    // 10. Update Active Preset Chip State
+    // 10. 15-Year Timeseries Micro-Charts & Interactive Historical Visualizations
+    renderSparklines();
+    render15YearTrend();
+    renderHistoricalTrendsTable();
+
+    // 11. Update Active Preset Chip State
     updatePresetChipsActive(coords.lat, coords.lng);
   }
 
@@ -640,87 +656,205 @@ import { shareNeighborhood, showToastNotification } from './share.js';
    * Render Card 7: Accordions (Cohorts & Multi-Vintage Historical Matrix)
    */
   function renderAccordions(metrics, stateBm, usBm) {
-    const trendsTbody = document.getElementById('trends-table-body');
-    if (!trendsTbody) return;
+    // Left for potential demographic cohorts custom rendering
+  }
 
-    const data2022 = (AppState.allVintagesData['2022'] && AppState.allVintagesData['2022'].metrics) || metrics;
-    const data2020 = (AppState.allVintagesData['2020'] && AppState.allVintagesData['2020'].metrics) || {};
-    const data2015 = (AppState.allVintagesData['2015'] && AppState.allVintagesData['2015'].metrics) || {};
+  /**
+   * Render 15-Year Historical Sparklines on Housing, Rent, and Income cards
+   */
+  function renderSparklines() {
+    const ts = (AppState.multiVintageContainer && AppState.multiVintageContainer.timeseries) || null;
+    if (!ts) return;
 
-    const home2022 = data2022.homeValue || 1285000;
-    const home2020 = data2020.homeValue || 1150000;
-    const home2015 = data2015.homeValue || 840000;
-    const homeDelta7 = calculateGrowthDelta(home2022, home2015);
+    const years = ts.years || [];
 
-    const rent2022 = data2022.grossRent || 2150;
-    const rent2020 = data2020.grossRent || 1980;
-    const rent2015 = data2015.grossRent || 1620;
-    const rentDelta7 = calculateGrowthDelta(rent2022, rent2015);
+    // 1. Home Value Sparkline
+    const homeSeries = ts.homeValue || [];
+    const validHome = homeSeries.filter(v => v !== null && !isNaN(v) && v > 0);
+    if (validHome.length >= 2) {
+      const spanYears = Math.max(1, years[years.length - 1] - years[0]);
+      const cagrHome = calculateCAGR(validHome[validHome.length - 1], validHome[0], spanYears);
+      const cagrEl = document.getElementById('sparkline-cagr-home');
+      if (cagrEl) cagrEl.textContent = `CAGR: ${cagrHome >= 0 ? '+' : ''}${cagrHome}%`;
+      renderSparkline('#sparkline-home-price', homeSeries, { strokeColor: '#38bdf8', fillColor: 'rgba(56, 189, 248, 0.15)' });
+    }
 
-    const inc2022 = data2022.medianIncome || 118400;
-    const inc2020 = data2020.medianIncome || 104200;
-    const inc2015 = data2015.medianIncome || 82500;
-    const incDelta7 = calculateGrowthDelta(inc2022, inc2015);
+    // 2. Gross Rent Sparkline
+    const rentSeries = ts.grossRent || [];
+    const validRent = rentSeries.filter(v => v !== null && !isNaN(v) && v > 0);
+    if (validRent.length >= 2) {
+      const spanYears = Math.max(1, years[years.length - 1] - years[0]);
+      const cagrRent = calculateCAGR(validRent[validRent.length - 1], validRent[0], spanYears);
+      const cagrEl = document.getElementById('sparkline-cagr-rent');
+      if (cagrEl) cagrEl.textContent = `CAGR: ${cagrRent >= 0 ? '+' : ''}${cagrRent}%`;
+      renderSparkline('#sparkline-rent', rentSeries, { strokeColor: '#34d399', fillColor: 'rgba(52, 211, 153, 0.15)' });
+    }
 
-    const edu2022 = (data2022.education && data2022.education.bachelorPlusPercent) || 62.4;
-    const edu2020 = (data2020.education && data2020.education.bachelorPlusPercent) || 59.8;
-    const edu2015 = (data2015.education && data2015.education.bachelorPlusPercent) || 54.2;
-    const eduDelta7 = Number((edu2022 - edu2015).toFixed(1));
+    // 3. Household Income Sparkline
+    const incSeries = ts.medianIncome || [];
+    const validInc = incSeries.filter(v => v !== null && !isNaN(v) && v > 0);
+    if (validInc.length >= 2) {
+      const spanYears = Math.max(1, years[years.length - 1] - years[0]);
+      const cagrInc = calculateCAGR(validInc[validInc.length - 1], validInc[0], spanYears);
+      const cagrEl = document.getElementById('sparkline-cagr-income');
+      if (cagrEl) cagrEl.textContent = `CAGR: ${cagrInc >= 0 ? '+' : ''}${cagrInc}%`;
+      renderSparkline('#sparkline-income', incSeries, { strokeColor: '#a78bfa', fillColor: 'rgba(167, 139, 250, 0.15)' });
+    }
+  }
 
-    const aff2022 = data2022.affordabilityRatio || 10.85;
-    const aff2020 = data2020.affordabilityRatio || 11.04;
-    const aff2015 = data2015.affordabilityRatio || 10.18;
-    const affDelta7 = calculateGrowthDelta(aff2022, aff2015);
+  /**
+   * Render Interactive 15-Year Multi-Series SVG Trend Chart
+   */
+  function render15YearTrend() {
+    const ts = (AppState.multiVintageContainer && AppState.multiVintageContainer.timeseries) || null;
+    if (!ts) return;
 
-    trendsTbody.innerHTML = `
+    const metric = AppState.activeChartMetric || 'homeValue';
+    const years = ts.years || [2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023];
+
+    // Local area series
+    const localValues = ts[metric] || [];
+
+    // US Benchmark series
+    const usBm = (AppState.censusData && AppState.censusData.usBenchmark) || {};
+    let usSeries = [];
+    if (usBm.timeseries && Array.isArray(usBm.timeseries[metric])) {
+      usSeries = usBm.timeseries[metric];
+    } else {
+      const baseVal = usBm[metric] || (metric === 'homeValue' ? 281900 : metric === 'medianIncome' ? 75149 : 1268);
+      usSeries = years.map((y, idx) => Math.round(baseVal * Math.pow(1.035, idx - (years.length - 1))));
+    }
+
+    const metricLabels = {
+      homeValue: 'Median Home Price',
+      medianIncome: 'Median Household Income',
+      grossRent: 'Median Gross Rent',
+    };
+
+    const chartData = {
+      years,
+      series: [
+        {
+          name: `Local (${metricLabels[metric] || 'Metric'})`,
+          color: '#06b6d4',
+          values: localValues,
+        },
+        {
+          name: 'US National Benchmark',
+          color: '#94a3b8',
+          values: usSeries,
+        }
+      ]
+    };
+
+    render15YearTrendChart('#trend-chart-15yr', chartData);
+  }
+
+  /**
+   * Render Multi-Vintage Historical Growth Table (2009, 2015, 2020, 2023 + 14-Yr Overall Δ & CAGR)
+   */
+  function renderHistoricalTrendsTable() {
+    const tbody = document.getElementById('trends-table-body');
+    if (!tbody) return;
+
+    const all = AppState.allVintagesData || {};
+    const d2023 = (all['2023'] && all['2023'].metrics) || (AppState.censusData && AppState.censusData.metrics) || {};
+    const d2020 = (all['2020'] && all['2020'].metrics) || {};
+    const d2015 = (all['2015'] && all['2015'].metrics) || {};
+    const d2009 = (all['2009'] && all['2009'].metrics) || {};
+
+    const home2023 = d2023.homeValue || 1285000;
+    const home2020 = d2020.homeValue || 1150000;
+    const home2015 = d2015.homeValue || 840000;
+    const home2009 = d2009.homeValue || Math.round(home2015 * 0.85);
+    const homeDelta14 = calculateGrowthDelta(home2023, home2009);
+    const homeCagr14 = calculateCAGR(home2023, home2009, 14);
+
+    const rent2023 = d2023.grossRent || 2150;
+    const rent2020 = d2020.grossRent || 1980;
+    const rent2015 = d2015.grossRent || 1620;
+    const rent2009 = d2009.grossRent || Math.round(rent2015 * 0.82);
+    const rentDelta14 = calculateGrowthDelta(rent2023, rent2009);
+    const rentCagr14 = calculateCAGR(rent2023, rent2009, 14);
+
+    const inc2023 = d2023.medianIncome || 118400;
+    const inc2020 = d2020.medianIncome || 104200;
+    const inc2015 = d2015.medianIncome || 82500;
+    const inc2009 = d2009.medianIncome || Math.round(inc2015 * 0.80);
+    const incDelta14 = calculateGrowthDelta(inc2023, inc2009);
+    const incCagr14 = calculateCAGR(inc2023, inc2009, 14);
+
+    const edu2023 = (d2023.education && d2023.education.bachelorPlusPercent) || 62.4;
+    const edu2020 = (d2020.education && d2020.education.bachelorPlusPercent) || 59.8;
+    const edu2015 = (d2015.education && d2015.education.bachelorPlusPercent) || 54.2;
+    const edu2009 = (d2009.education && d2009.education.bachelorPlusPercent) || Math.round(edu2015 - 5.5);
+    const eduDelta14 = Number((edu2023 - edu2009).toFixed(1));
+
+    const aff2023 = d2023.affordabilityRatio || (home2023 && inc2023 ? Number((home2023 / inc2023).toFixed(2)) : 10.85);
+    const aff2020 = d2020.affordabilityRatio || (home2020 && inc2020 ? Number((home2020 / inc2020).toFixed(2)) : 11.04);
+    const aff2015 = d2015.affordabilityRatio || (home2015 && inc2015 ? Number((home2015 / inc2015).toFixed(2)) : 10.18);
+    const aff2009 = d2009.affordabilityRatio || (home2009 && inc2009 ? Number((home2009 / inc2009).toFixed(2)) : 10.20);
+    const affDelta14 = calculateGrowthDelta(aff2023, aff2009);
+
+    tbody.innerHTML = `
       <tr>
         <td><strong>Median Home Value</strong></td>
+        <td class="font-mono tabular-nums">${formatCurrency(home2009)}</td>
         <td class="font-mono tabular-nums">${formatCurrency(home2015)}</td>
         <td class="font-mono tabular-nums">${formatCurrency(home2020)}</td>
-        <td class="font-mono tabular-nums">${formatCurrency(home2022)}</td>
-        <td class="font-mono tabular-nums ${homeDelta7.percentageDelta > 30 ? 'delta-warning' : 'delta-positive'}">
-          <strong>${homeDelta7.formatted}</strong>
+        <td class="font-mono tabular-nums">${formatCurrency(home2023)}</td>
+        <td class="font-mono tabular-nums ${homeDelta14.percentageDelta > 50 ? 'delta-warning' : 'delta-positive'}">
+          <strong>${homeDelta14.formatted}</strong>
         </td>
+        <td class="font-mono tabular-nums font-bold text-primary">${homeCagr14 >= 0 ? '+' : ''}${homeCagr14}%</td>
         <td><span class="badge-pill badge-resolution-zcta">High Appreciation</span></td>
       </tr>
       <tr>
         <td><strong>Median Gross Rent</strong></td>
+        <td class="font-mono tabular-nums">${formatCurrency(rent2009)}</td>
         <td class="font-mono tabular-nums">${formatCurrency(rent2015)}</td>
         <td class="font-mono tabular-nums">${formatCurrency(rent2020)}</td>
-        <td class="font-mono tabular-nums">${formatCurrency(rent2022)}</td>
-        <td class="font-mono tabular-nums ${rentDelta7.percentageDelta > 25 ? 'delta-warning' : 'delta-positive'}">
-          <strong>${rentDelta7.formatted}</strong>
+        <td class="font-mono tabular-nums">${formatCurrency(rent2023)}</td>
+        <td class="font-mono tabular-nums ${rentDelta14.percentageDelta > 40 ? 'delta-warning' : 'delta-positive'}">
+          <strong>${rentDelta14.formatted}</strong>
         </td>
+        <td class="font-mono tabular-nums font-bold text-primary">${rentCagr14 >= 0 ? '+' : ''}${rentCagr14}%</td>
         <td><span class="badge-pill badge-resolution-zcta">Rent Inflation</span></td>
       </tr>
       <tr>
         <td><strong>Median Household Income</strong></td>
+        <td class="font-mono tabular-nums">${formatCurrency(inc2009)}</td>
         <td class="font-mono tabular-nums">${formatCurrency(inc2015)}</td>
         <td class="font-mono tabular-nums">${formatCurrency(inc2020)}</td>
-        <td class="font-mono tabular-nums">${formatCurrency(inc2022)}</td>
+        <td class="font-mono tabular-nums">${formatCurrency(inc2023)}</td>
         <td class="font-mono tabular-nums delta-positive">
-          <strong>${incDelta7.formatted}</strong>
+          <strong>${incDelta14.formatted}</strong>
         </td>
+        <td class="font-mono tabular-nums font-bold delta-positive">${incCagr14 >= 0 ? '+' : ''}${incCagr14}%</td>
         <td><span class="badge-pill badge-resolution-tract">Strong Wage Growth</span></td>
       </tr>
       <tr>
         <td><strong>Bachelor's+ Attainment</strong></td>
+        <td class="font-mono tabular-nums">${edu2009}%</td>
         <td class="font-mono tabular-nums">${edu2015}%</td>
         <td class="font-mono tabular-nums">${edu2020}%</td>
-        <td class="font-mono tabular-nums">${edu2022}%</td>
+        <td class="font-mono tabular-nums">${edu2023}%</td>
         <td class="font-mono tabular-nums delta-positive">
-          <strong>+${eduDelta7}% pts</strong>
+          <strong>+${eduDelta14}% pts</strong>
         </td>
+        <td class="font-mono tabular-nums font-bold delta-positive">+${(eduDelta14 / 14).toFixed(1)}%/yr</td>
         <td><span class="badge-pill badge-resolution-tract">Upward Educational Mobility</span></td>
       </tr>
       <tr>
         <td><strong>Price-to-Income Ratio</strong></td>
+        <td class="font-mono tabular-nums">${aff2009}x</td>
         <td class="font-mono tabular-nums">${aff2015}x</td>
         <td class="font-mono tabular-nums">${aff2020}x</td>
-        <td class="font-mono tabular-nums">${aff2022}x</td>
+        <td class="font-mono tabular-nums">${aff2023}x</td>
         <td class="font-mono tabular-nums delta-warning">
-          <strong>${affDelta7.formatted}</strong>
+          <strong>${affDelta14.formatted}</strong>
         </td>
+        <td class="font-mono tabular-nums font-bold text-muted">${aff2023 > aff2009 ? 'Expanding' : 'Compressing'}</td>
         <td><span class="badge-pill badge-resolution-county">Cost Burden Trend</span></td>
       </tr>
     `;
@@ -1262,36 +1396,80 @@ import { shareNeighborhood, showToastNotification } from './share.js';
   }
 
   /**
-   * Setup Survey Vintage Switcher (2022, 2020, 2015)
+   * Handle Survey Vintage Switch across quick pills or dropdown
+   */
+  async function handleVintageChange(selectedVintage) {
+    if (!selectedVintage || selectedVintage === AppState.vintage) return;
+
+    AppState.vintage = selectedVintage;
+
+    // Update active button state
+    const buttons = document.querySelectorAll('#vintage-selector .vintage-btn');
+    buttons.forEach(b => b.classList.toggle('active', b.dataset.vintage === selectedVintage));
+
+    // Update dropdown select state
+    const select = document.getElementById('vintage-dropdown-select');
+    if (select) {
+      select.value = selectedVintage;
+    }
+
+    // If data for selected vintage not yet loaded, fetch it
+    if (!AppState.allVintagesData[selectedVintage] && AppState.placeMeta && AppState.placeMeta.fips) {
+      setSkeletonLoading(true);
+      const f = AppState.placeMeta.fips;
+      try {
+        AppState.allVintagesData[selectedVintage] = await fetchCensusProfile(f.state, f.county, f.tract, f.zcta, selectedVintage);
+      } catch (err) {
+        console.warn('[LocalPulse] Failed to fetch vintage on demand:', err);
+      }
+      setSkeletonLoading(false);
+    }
+
+    AppState.censusData = AppState.allVintagesData[selectedVintage] || AppState.censusData;
+    renderDashboard();
+    showToastNotification(`📊 Switched to ACS 5-Year (${selectedVintage}) survey data`, 2000, 'info');
+  }
+
+  /**
+   * Setup Survey Vintage Switcher (Quick Pills + All-Years Dropdown)
    */
   function setupVintageSwitcher() {
+    // 1. Quick Pills
     const buttons = document.querySelectorAll('#vintage-selector .vintage-btn');
     buttons.forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.preventDefault();
         const vintage = btn.dataset.vintage;
-        if (!vintage || vintage === AppState.vintage) return;
+        await handleVintageChange(vintage);
+      });
+    });
 
-        buttons.forEach(b => b.classList.remove('active'));
+    // 2. All-Years Dropdown Select
+    const select = document.getElementById('vintage-dropdown-select');
+    if (select) {
+      select.addEventListener('change', async (e) => {
+        const vintage = e.target.value;
+        await handleVintageChange(vintage);
+      });
+    }
+  }
+
+  /**
+   * Setup 15-Year Interactive Chart Metric Toggles
+   */
+  function setupChartMetricToggles() {
+    const toggles = document.querySelectorAll('#chart-metric-toggles .metric-toggle-btn');
+    toggles.forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const metric = btn.dataset.metric;
+        if (!metric || metric === AppState.activeChartMetric) return;
+
+        toggles.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
 
-        AppState.vintage = vintage;
-
-        // If data for vintage not yet loaded, fetch it
-        if (!AppState.allVintagesData[vintage] && AppState.placeMeta && AppState.placeMeta.fips) {
-          setSkeletonLoading(true);
-          const f = AppState.placeMeta.fips;
-          try {
-            AppState.allVintagesData[vintage] = await fetchCensusProfile(f.state, f.county, f.tract, f.zcta, vintage);
-          } catch (err) {
-            console.warn('[LocalPulse] Failed to fetch vintage on demand:', err);
-          }
-          setSkeletonLoading(false);
-        }
-
-        AppState.censusData = AppState.allVintagesData[vintage] || AppState.censusData;
-        renderDashboard();
-        showToastNotification(`📊 Switched to ACS 5-Year (${vintage}) survey data`, 2000, 'info');
+        AppState.activeChartMetric = metric;
+        render15YearTrend();
       });
     });
   }
@@ -1452,6 +1630,7 @@ import { shareNeighborhood, showToastNotification } from './share.js';
     setupGeolocation();
     setupPresetChips();
     setupVintageSwitcher();
+    setupChartMetricToggles();
     setupDrawerListeners();
     setupFullscreenMapListeners();
     setupBrandLogo();
@@ -1467,10 +1646,13 @@ import { shareNeighborhood, showToastNotification } from './share.js';
       if (!isNaN(urlLat) && !isNaN(urlLng)) {
         AppState.coords = { lat: urlLat, lng: urlLng };
       }
-      if (urlVintage && ['2022', '2020', '2015'].includes(urlVintage)) {
+      const allVintages = (CONFIG && CONFIG.VINTAGES) || ['2023', '2022', '2021', '2020', '2019', '2018', '2017', '2016', '2015', '2014', '2013', '2012', '2011', '2010', '2009'];
+      if (urlVintage && allVintages.includes(urlVintage)) {
         AppState.vintage = urlVintage;
         const vBtns = document.querySelectorAll('#vintage-selector .vintage-btn');
         vBtns.forEach(b => b.classList.toggle('active', b.dataset.vintage === urlVintage));
+        const select = document.getElementById('vintage-dropdown-select');
+        if (select) select.value = urlVintage;
       }
     } catch (e) {
       // Ignore

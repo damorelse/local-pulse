@@ -461,8 +461,133 @@ export async function fetchCensusProfile(stateFips, countyFips, tractFips, zcta 
   };
 }
 
+/**
+ * Concurrently fetch multiple survey vintages with throttled batching
+ *
+ * @param {string} stateFips
+ * @param {string} countyFips
+ * @param {string} tractFips
+ * @param {string} zcta
+ * @param {Array<string>} vintages
+ * @param {object} [options]
+ * @returns {Promise<Record<string, object>>}
+ */
+export async function fetchVintageBatch(stateFips, countyFips, tractFips, zcta = '', vintages = ['2022'], options = {}) {
+  const results = {};
+  const queue = [...vintages];
+  const CONCURRENCY = 4;
+
+  const workers = Array.from({ length: Math.min(queue.length, CONCURRENCY) }, async () => {
+    while (queue.length > 0) {
+      if (options.signal && options.signal.aborted) break;
+      const v = queue.shift();
+      try {
+        const profile = await fetchCensusProfile(stateFips, countyFips, tractFips, zcta, v, options);
+        results[v] = profile;
+      } catch (err) {
+        if (err.name === 'AbortError') throw err;
+        results[v] = null;
+      }
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
+}
+
+/**
+ * Multi-vintage timeseries pipeline with IndexedDB persistence and tiered lazy loading
+ *
+ * @param {string} stateFips
+ * @param {string} countyFips
+ * @param {string} tractFips
+ * @param {string} zcta
+ * @param {object} [options]
+ * @returns {Promise<{ key: string, vintages: object, timeseries: object, isComplete: boolean, fetchHistorical: Function }>}
+ */
+export async function fetchMultiVintageTimeseries(stateFips, countyFips, tractFips, zcta = '', options = {}) {
+  const cacheKey = `fips-${stateFips || '00'}-${countyFips || '000'}-${tractFips || '000000'}`;
+  
+  // 1. Check IndexedDB cached timeseries
+  if (typeof window !== 'undefined' && window.LocalPulseStorage && typeof window.LocalPulseStorage.getTimeseries === 'function') {
+    const cached = await window.LocalPulseStorage.getTimeseries(cacheKey).catch(() => null);
+    if (cached && cached.vintages && Object.keys(cached.vintages).length >= 10) {
+      return {
+        key: cacheKey,
+        vintages: cached.vintages,
+        timeseries: cached.timeseries,
+        isComplete: true,
+        fetchHistorical: async () => cached,
+      };
+    }
+  }
+
+  // 2. Phase 1: Fetch Anchor Vintages (2023, 2022, 2020, 2015) for instant paint
+  const anchors = CONFIG.ANCHOR_VINTAGES || ['2023', '2022', '2020', '2015'];
+  const anchorProfiles = await fetchVintageBatch(stateFips, countyFips, tractFips, zcta, anchors, options);
+
+  const buildTimeSeries = (allVintages) => {
+    const allYears = (CONFIG.VINTAGES || ['2023', '2022', '2021', '2020', '2019', '2018', '2017', '2016', '2015', '2014', '2013', '2012', '2011', '2010', '2009'])
+      .map(Number)
+      .sort((a, b) => a - b);
+
+    const ts = {
+      years: allYears,
+      homeValue: [],
+      medianIncome: [],
+      grossRent: [],
+      affordabilityRatio: [],
+      rentBurden: [],
+    };
+
+    for (const yr of allYears) {
+      const p = allVintages[String(yr)];
+      const m = (p && p.metrics) || {};
+      ts.homeValue.push(m.homeValue ?? null);
+      ts.medianIncome.push(m.medianIncome ?? null);
+      ts.grossRent.push(m.grossRent ?? null);
+      ts.affordabilityRatio.push(m.affordabilityRatio ?? null);
+      ts.rentBurden.push(m.rentBurden ?? null);
+    }
+    return ts;
+  };
+
+  const initialTimeseries = buildTimeSeries(anchorProfiles);
+
+  const container = {
+    key: cacheKey,
+    vintages: anchorProfiles,
+    timeseries: initialTimeseries,
+    isComplete: false,
+    fetchHistorical: async () => {
+      if (container.isComplete) return container;
+      const allYears = CONFIG.VINTAGES || ['2023', '2022', '2021', '2020', '2019', '2018', '2017', '2016', '2015', '2014', '2013', '2012', '2011', '2010', '2009'];
+      const remainingYears = allYears.filter(y => !anchorProfiles[y]);
+      const historicalProfiles = await fetchVintageBatch(stateFips, countyFips, tractFips, zcta, remainingYears, options);
+
+      Object.assign(container.vintages, historicalProfiles);
+      container.timeseries = buildTimeSeries(container.vintages);
+      container.isComplete = true;
+
+      // Persist to IndexedDB
+      if (typeof window !== 'undefined' && window.LocalPulseStorage && typeof window.LocalPulseStorage.saveTimeseries === 'function') {
+        await window.LocalPulseStorage.saveTimeseries(cacheKey, {
+          vintages: container.vintages,
+          timeseries: container.timeseries,
+        }).catch(() => {});
+      }
+
+      return container;
+    }
+  };
+
+  return container;
+}
+
 const CENSUS = {
   fetchCensusProfile,
+  fetchVintageBatch,
+  fetchMultiVintageTimeseries,
   sanitizeCensusValue,
   parseCensusRows,
   buildCensusMetrics,
